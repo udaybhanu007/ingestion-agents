@@ -1,0 +1,51 @@
+{
+  "api": {
+    "host": "0.0.0.0",
+    "port": 8000,
+    "reload": true,
+    "log_level": "info"
+  },
+  "ingestion": {
+    "default_priority": 5,
+    "max_concurrent_jobs": 10,
+    "timeout_minutes": 60,
+    "retry_attempts": 3
+  },
+  "connectors": {
+    "box": {
+      "client_id": "${BOX_CLIENT_ID}",
+      "client_secret": "${BOX_CLIENT_SECRET}",
+      "access_token": "${BOX_ACCESS_TOKEN}"
+    },
+    "confluence": {
+      "base_url": "${CONFLUENCE_BASE_URL}",
+      "username": "${CONFLUENCE_USERNAME}",
+      "api_token": "${CONFLUENCE_API_TOKEN}"
+    },
+    "azure": {
+      "tenant_id": "${AZURE_TENANT_ID}",
+      "client_id": "${AZURE_CLIENT_ID}",
+      "client_secret": "${AZURE_CLIENT_SECRET}",
+      "storage_account": "${AZURE_STORAGE_ACCOUNT}"
+    }
+  },
+  "tools": {
+    "vector_database": {
+      "type": "chroma",
+      "host": "localhost",
+      "port": 8001,
+      "embedding_dimension": 384
+    },
+    "graph_database": {
+      "type": "neo4j",
+      "uri": "bolt://localhost:7687",
+      "username": "neo4j",
+      "password": "${NEO4J_PASSWORD}"
+    }
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "file": "logs/ingestion.log"
+  }
+}

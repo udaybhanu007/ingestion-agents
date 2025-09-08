@@ -53,7 +53,7 @@ flowchart TD
     DocRetrieval --> BoxDocs[retrieve_documents_from_box<br/>- List files<br/>- Download content<br/>- Create doc objects]
     DocRetrieval --> ConfluenceDocs[retrieve_documents_from_confluence<br/>- Get page content<br/>- Create doc objects]
     
-    AzureDocs --> Classify[LLM-Powered Classification Phase<br/>classify_document_with_llm()]
+    AzureDocs --> Classify[LLM-Powered Classification Phase<br/>classify_document_with_llm]
     BoxDocs --> Classify
     ConfluenceDocs --> Classify
     
@@ -65,7 +65,7 @@ flowchart TD
     Decision -->|Rich semantics +<br/>Minimal relationships +<br/>Vector queries| VectorOnly[VECTOR_STORE_ONLY]
     Decision -->|Both structured +<br/>Semantic content +<br/>Mixed queries| DualIngest[DUAL_INGESTION]
     
-    GraphOnly --> PlanGen[JSON Plan Generation<br/>generate_ingestion_plan()]
+    GraphOnly --> PlanGen[JSON Plan Generation<br/>generate_ingestion_plan]
     VectorOnly --> PlanGen
     DualIngest --> PlanGen
     
@@ -76,8 +76,8 @@ flowchart TD
     
     Results --> Save[Save Results to JSON]
     Save --> Output[Output: Structured Ingestion Plans]
-    Error --> End([End: Error])
-    Output --> End([End: Success])
+    Error --> EndError([End: Error])
+    Output --> EndSuccess([End: Success])
 ```
 
 ## Detailed Process Flow

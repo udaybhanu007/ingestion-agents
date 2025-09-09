@@ -11,8 +11,14 @@ It acts as an expert Document Classifier & Ingest Planner that:
 import asyncio
 import json
 import os
+import sys
 from typing import Dict, List, Any, Optional
 from datetime import datetime
+
+# Add the parent directory to the path to import local modules
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.insert(0, parent_dir)
 
 # Azure OpenAI imports
 try:
@@ -275,13 +281,7 @@ Please respond with a JSON object containing:
 {{
     "classification": "VECTOR_STORE_ONLY|KNOWLEDGE_GRAPH_ONLY|DUAL_INGESTION",
     "document_type": "specific document type from guidelines",
-    "confidence_score": 0.0-1.0,
-    "reasoning": {{
-        "structure_analysis": "explanation of structure findings",
-        "relationship_analysis": "explanation of entity relationships",
-        "query_pattern_analysis": "explanation of expected query types",
-        "final_decision_rationale": "why this classification was chosen"
-    }},
+    "reasoning": "explanation of why this classification was chosen based on structure, relationships, and expected query patterns",
     "key_indicators": [
         "list of key indicators that influenced the decision"
     ]
@@ -296,7 +296,6 @@ Please respond with a JSON object containing:
         # Extract classification
         classification = llm_result.get('classification', 'VECTOR_STORE_ONLY')
         document_type = llm_result.get('document_type', 'unknown')
-        confidence_score = float(llm_result.get('confidence_score', 0.5))
         reasoning = llm_result.get('reasoning', {})
         key_indicators = llm_result.get('key_indicators', [])
         
@@ -305,19 +304,13 @@ Please respond with a JSON object containing:
         if classification not in valid_classifications:
             self.logger.warning(f"Invalid classification {classification}, defaulting to VECTOR_STORE_ONLY")
             classification = 'VECTOR_STORE_ONLY'
-            confidence_score = 0.3  # Lower confidence for fallback
         
         return {
             'doc_uri': doc_uri,
             'classification': classification,
             'document_type': document_type,
-            'confidence_score': confidence_score,
             'reasoning': reasoning,
-            'key_indicators': key_indicators,
-            'structure_analysis': structure_analysis,
-            'entities_found': entities[:20],  # Limit for storage
-            'classification_timestamp': datetime.now().isoformat(),
-            'classifier_type': 'llm_powered'
+            'key_indicators': key_indicators
         }
     
     def _fallback_classification(self, content: str, doc_uri: str, 
@@ -343,13 +336,8 @@ Please respond with a JSON object containing:
             'doc_uri': doc_uri,
             'classification': classification,
             'document_type': document_type,
-            'confidence_score': 0.4,  # Lower confidence for rule-based
             'reasoning': {'fallback': 'Used rule-based classification due to LLM unavailability'},
-            'key_indicators': ['fallback_classification'],
-            'structure_analysis': structure_analysis,
-            'entities_found': extract_entities(content)[:20],
-            'classification_timestamp': datetime.now().isoformat(),
-            'classifier_type': 'rule_based_fallback'
+            'key_indicators': ['fallback_classification']
         }
     
     def generate_ingestion_plan(self, classification_result: Dict[str, Any]) -> Dict[str, Any]:
@@ -430,12 +418,30 @@ Please respond with a JSON object containing:
         documents = []
         
         try:
-            files = connector.list_files(folder_id)[:max_docs]
+            # First try to find the documents-ingest folder if we're starting from root
+            target_folder_id = folder_id
+            if folder_id == "0":
+                # Look for documents-ingest folder
+                ingest_folder_id = connector.find_folder_by_name("documents-ingest", "0")
+                if ingest_folder_id:
+                    self.logger.info(f"Found documents-ingest folder with ID: {ingest_folder_id}")
+                    target_folder_id = ingest_folder_id
+                else:
+                    self.logger.info("documents-ingest folder not found, searching recursively from root")
+            
+            # Try recursive search first to find all files
+            files = connector.list_files_recursive(target_folder_id, max_docs)
+            
+            # If no files found recursively, try direct folder listing
+            if not files:
+                files = connector.list_files(target_folder_id)[:max_docs]
+            
+            self.logger.info(f"Found {len(files)} files to process from folder {target_folder_id}")
             
             for file_info in files:
                 if file_info['type'] == 'file':
                     file_id = file_info['id']
-                    download_result = connector.download_file(file_id)
+                    download_result = connector.download_file(file_id, file_name=file_info['name'])
                     
                     if download_result and isinstance(download_result, str):
                         try:
@@ -449,6 +455,9 @@ Please respond with a JSON object containing:
                                 'metadata': file_info,
                                 'source': 'box'
                             })
+                            
+                            self.logger.info(f"Successfully processed Box file: {file_info['name']}")
+                            
                         except Exception as e:
                             self.logger.error(f"Error reading downloaded file {download_result}: {e}")
                             
@@ -470,14 +479,13 @@ Please respond with a JSON object containing:
                 result = await connector.download_page_content(page_title)
                 
                 if result.get('success'):
-                    page_data = result['data']
-                    content = page_data.get('content', '')
+                    content = result.get('content', '')
                     
-                    doc_uri = f"confluence://page/{page_data.get('id', page_title)}"
+                    doc_uri = f"confluence://page/{page_title}"
                     documents.append({
                         'uri': doc_uri,
                         'content': content,
-                        'metadata': page_data,
+                        'metadata': result,
                         'source': 'confluence'
                     })
                     
@@ -522,7 +530,7 @@ Please respond with a JSON object containing:
                 # Log result
                 self.logger.info(format_classification_result(
                     classification_result['classification'],
-                    classification_result['confidence_score'],
+                    0.85,  # Default confidence since removed from structure
                     classification_result['document_type'],
                     doc['uri']
                 ))
@@ -555,7 +563,7 @@ Please respond with a JSON object containing:
 
 # Example usage
 async def main():
-    """Example usage of the Planner Agent."""
+    """Example usage of the Planner Agent with real connectors."""
     
     # Initialize the Planner Agent
     planner = PlannerAgent()
@@ -563,60 +571,260 @@ async def main():
     print("Available connectors:", planner.get_available_connectors())
     print("LLM available:", planner.is_llm_available())
     
-    # Example: Process a sample document
-    sample_documents = [
-        {
-            'uri': 'example://sample/medical_protocol.txt',
-            'content': '''
-            Medical Treatment Protocol for Diabetes Management
-            
-            1. Patient Assessment
-               1.1 Blood glucose monitoring
-               1.2 HbA1c testing
-               1.3 Complication screening
-            
-            2. Treatment Plan
-               2.1 Medication Management
-                   - Metformin is first-line treatment
-                   - Insulin therapy depends on blood glucose levels
-                   - Drug interactions must be monitored
-               
-               2.2 Lifestyle Interventions
-                   - Diet modification
-                   - Exercise program
-                   - Weight management
-            
-            3. Monitoring Protocol
-               - Daily glucose checks
-               - Quarterly HbA1c
-               - Annual eye examination
-            
-            Drug Interactions:
-            - Metformin interacts with contrast agents
-            - Insulin dosage affects other medications
-            - Monitor for hypoglycemia with combination therapy
-            ''',
-            'metadata': {'type': 'medical_document'},
-            'source': 'example'
-        }
-    ]
+    results = []
     
-    # Classify and plan
-    results = await planner.classify_and_plan_documents(sample_documents)
+    # Process documents from Azure Blob Storage (if available)
+    if 'azure' in planner.get_available_connectors():
+        print("\n--- Processing Azure Documents ---")
+        try:
+            # Replace with your actual container name
+            container_name = os.getenv("AZURE_CONTAINER_NAME", "documents")
+            prefix = os.getenv("AZURE_BLOB_PREFIX", None)  # Optional prefix filter
+            max_docs = int(os.getenv("MAX_DOCS_PER_SOURCE", "5"))
+            
+            azure_results = await planner.process_azure_documents(
+                container_name=container_name,
+                prefix=prefix,
+                max_docs=max_docs
+            )
+            results.extend(azure_results)
+            print(f"Processed {len(azure_results)} Azure documents")
+            
+        except Exception as e:
+            print(f"Error processing Azure documents: {e}")
+    
+    # Process documents from Box (if available)
+    if 'box' in planner.get_available_connectors():
+        print("\n--- Processing Box Documents ---")
+        try:
+            # Replace with your actual folder ID (0 = root folder)
+            folder_id = os.getenv("BOX_FOLDER_ID", "0")
+            max_docs = int(os.getenv("MAX_DOCS_PER_SOURCE", "5"))
+            
+            box_results = await planner.process_box_documents(
+                folder_id=folder_id,
+                max_docs=max_docs
+            )
+            results.extend(box_results)
+            print(f"Processed {len(box_results)} Box documents")
+            
+        except Exception as e:
+            print(f"Error processing Box documents: {e}")
+    
+    # Process documents from Confluence (if available)
+    if 'confluence' in planner.get_available_connectors():
+        print("\n--- Processing Confluence Documents ---")
+        try:
+            # Get configured Confluence pages from environment
+            if planner.connectors.get('confluence') and planner.connectors['confluence'].is_available():
+                page_titles = planner.connectors['confluence'].get_configured_pages()
+                if not page_titles:
+                    # Fallback to environment variable if no pages configured
+                    page_titles_env = os.getenv("CONFLUENCE_PAGE_TITLES", "")
+                    if page_titles_env:
+                        page_titles = [title.strip() for title in page_titles_env.split(",")]
+                    else:
+                        # Default page titles for testing
+                        page_titles = [
+                            "API Documentation",
+                            "Project Overview", 
+                            "User Guide",
+                            "Technical Specifications"
+                        ]
+            else:
+                page_titles = []
+            
+            if page_titles:
+                confluence_results = await planner.process_confluence_documents(page_titles)
+                results.extend(confluence_results)
+                print(f"Processed {len(confluence_results)} Confluence documents")
+            else:
+                print("No Confluence pages configured or connector not available")
+                
+        except Exception as e:
+            print(f"Error processing Confluence documents: {e}")
+    
+    # If no connectors are available, provide sample data for testing
+    if not results and not planner.get_available_connectors():
+        print("\n--- No connectors available, using sample document for testing ---")
+        sample_documents = [
+            {
+                'uri': 'example://sample/medical_protocol.txt',
+                'content': '''
+                Medical Treatment Protocol for Diabetes Management
+                
+                1. Patient Assessment
+                   1.1 Blood glucose monitoring
+                   1.2 HbA1c testing
+                   1.3 Complication screening
+                
+                2. Treatment Plan
+                   2.1 Medication Management
+                       - Metformin is first-line treatment
+                       - Insulin therapy depends on blood glucose levels
+                       - Drug interactions must be monitored
+                   
+                   2.2 Lifestyle Interventions
+                       - Diet modification
+                       - Exercise program
+                       - Weight management
+                
+                3. Monitoring Protocol
+                   - Daily glucose checks
+                   - Quarterly HbA1c
+                   - Annual eye examination
+                
+                Drug Interactions:
+                - Metformin interacts with contrast agents
+                - Insulin dosage affects other medications
+                - Monitor for hypoglycemia with combination therapy
+                ''',
+                'metadata': {'type': 'medical_document'},
+                'source': 'example'
+            }
+        ]
+        
+        # Classify and plan sample documents
+        results = await planner.classify_and_plan_documents(sample_documents)
     
     # Display results
-    for result in results:
-        print(f"\n--- Classification Result ---")
-        print(f"Document: {result['doc_uri']}")
-        print(f"Classification: {result['classification']}")
-        print(f"Document Type: {result['document_type']}")
-        print(f"Confidence: {result['confidence_score']}")
-        print(f"Classifier Type: {result['classifier_type']}")
-        print(f"\nIngestion Plan:")
-        print(json.dumps(result['ingestion_plan'], indent=2))
+    if results:
+        print(f"\n=== PROCESSING COMPLETE ===")
+        print(f"Total documents processed: {len(results)}")
+        
+        # Classification summary
+        vector_only = [r for r in results if r['classification'] == 'VECTOR_STORE_ONLY']
+        graph_only = [r for r in results if r['classification'] == 'KNOWLEDGE_GRAPH_ONLY']
+        dual = [r for r in results if r['classification'] == 'DUAL_INGESTION']
+        
+        print(f"\nClassification Summary:")
+        print(f"  Vector Store Only: {len(vector_only)}")
+        print(f"  Knowledge Graph Only: {len(graph_only)}")
+        print(f"  Dual Ingestion: {len(dual)}")
+        
+        for i, result in enumerate(results, 1):
+            print(f"\n--- Classification Result {i} ---")
+            print(f"Document: {result['doc_uri']}")
+            print(f"Source: {result['source']}")
+            print(f"Classification: {result['classification']}")
+            print(f"Document Type: {result['document_type']}")
+            print(f"Reasoning: {result['reasoning']}")
+            
+            # Show key indicators
+            if result.get('key_indicators'):
+                print(f"Key Indicators: {', '.join(result['key_indicators'])}")
+            
+            # Show ingestion plan summary
+            plan = result.get('ingestion_plan', {})
+            steps = plan.get('steps', [])
+            print(f"Ingestion Steps: {len(steps)} step(s)")
+            for step in steps:
+                task_id = step.get('task_id', 'unknown')
+                tool = step.get('tool', 'unknown')
+                print(f"  - Task {task_id}: {tool}")
+        
+        # Save results with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = f"planner_agent_results_{timestamp}.json"
+        
+        if planner.save_results(results, output_file):
+            print(f"\nResults saved to: {output_file}")
+        else:
+            print("\nFailed to save results")
+    else:
+        print("\nNo documents were processed")
+
+
+async def process_specific_sources():
+    """Example of processing specific document sources."""
+    planner = PlannerAgent()
     
-    # Save results
-    planner.save_results(results, "planner_agent_results.json")
+    # Process only Azure documents
+    if 'azure' in planner.get_available_connectors():
+        print("Processing Azure documents only...")
+        results = await planner.process_azure_documents(
+            container_name="my-documents",
+            prefix="reports/",
+            max_docs=20
+        )
+        
+        # Filter results by classification
+        vector_only = [r for r in results if r['classification'] == 'VECTOR_STORE_ONLY']
+        graph_only = [r for r in results if r['classification'] == 'KNOWLEDGE_GRAPH_ONLY']
+        dual = [r for r in results if r['classification'] == 'DUAL_INGESTION']
+        
+        print(f"Classification Summary:")
+        print(f"  Vector Store Only: {len(vector_only)}")
+        print(f"  Knowledge Graph Only: {len(graph_only)}")
+        print(f"  Dual Ingestion: {len(dual)}")
+        
+        return results
+    else:
+        print("Azure connector not available")
+        return []
+
+
+async def batch_process_with_config():
+    """Example of batch processing with configuration."""
+    planner = PlannerAgent()
+    
+    # Configuration for batch processing
+    config = {
+        'azure': {
+            'enabled': True,
+            'container_name': os.getenv('AZURE_CONTAINER_NAME', 'documents'),
+            'prefix': os.getenv('AZURE_BLOB_PREFIX'),
+            'max_docs': 10
+        },
+        'box': {
+            'enabled': True,
+            'folder_id': os.getenv('BOX_FOLDER_ID', '0'),
+            'max_docs': 10
+        },
+        'confluence': {
+            'enabled': True,
+            'page_titles': ['API Documentation', 'User Guide', 'Architecture Overview'],
+            'max_docs': 5
+        }
+    }
+    
+    all_results = []
+    
+    # Process each configured source
+    for source, source_config in config.items():
+        if not source_config.get('enabled', False):
+            continue
+            
+        if source not in planner.get_available_connectors():
+            print(f"Skipping {source}: connector not available")
+            continue
+            
+        print(f"\nProcessing {source} documents...")
+        
+        try:
+            if source == 'azure':
+                results = await planner.process_azure_documents(
+                    container_name=source_config['container_name'],
+                    prefix=source_config.get('prefix'),
+                    max_docs=source_config['max_docs']
+                )
+            elif source == 'box':
+                results = await planner.process_box_documents(
+                    folder_id=source_config['folder_id'],
+                    max_docs=source_config['max_docs']
+                )
+            elif source == 'confluence':
+                results = await planner.process_confluence_documents(
+                    source_config['page_titles']
+                )
+            
+            all_results.extend(results)
+            print(f"  Processed {len(results)} documents from {source}")
+            
+        except Exception as e:
+            print(f"  Error processing {source}: {e}")
+    
+    return all_results
 
 
 if __name__ == "__main__":

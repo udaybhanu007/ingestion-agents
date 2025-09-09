@@ -549,7 +549,8 @@ class BoxConnector:
                         'size': getattr(item, 'size', 0),
                         'type': item.type,
                         'modified_at': getattr(item, 'modified_at', None),
-                        'created_at': getattr(item, 'created_at', None)
+                        'created_at': getattr(item, 'created_at', None),
+                        'etag': getattr(item, 'etag', None)
                     }
                     files.append(file_info)
             
@@ -559,6 +560,95 @@ class BoxConnector:
         except Exception as e:
             self.logger.error(f"Error listing files in folder {folder_id}: {e}")
             return []
+    
+    def list_files_recursive(self, folder_id: str = "0", max_files: int = 100) -> List[Dict[str, Any]]:
+        """
+        List files recursively in Box folder and all subfolders.
+        
+        Args:
+            folder_id (str): Box folder ID to start from
+            max_files (int): Maximum number of files to return
+            
+        Returns:
+            List[Dict[str, Any]]: List of file metadata from all subfolders
+        """
+        try:
+            if not self.client:
+                self.logger.error("Not authenticated")
+                return []
+            
+            all_files = []
+            folders_to_process = [folder_id]
+            
+            while folders_to_process and len(all_files) < max_files:
+                current_folder_id = folders_to_process.pop(0)
+                
+                try:
+                    folder = self.client.folder(current_folder_id)
+                    items = folder.get_items()
+                    
+                    for item in items:
+                        if len(all_files) >= max_files:
+                            break
+                            
+                        if item.type == 'file':
+                            file_info = {
+                                'id': item.id,
+                                'name': item.name,
+                                'size': getattr(item, 'size', 0),
+                                'type': item.type,
+                                'modified_at': getattr(item, 'modified_at', None),
+                                'created_at': getattr(item, 'created_at', None),
+                                'etag': getattr(item, 'etag', None),
+                                'folder_id': current_folder_id
+                            }
+                            all_files.append(file_info)
+                        elif item.type == 'folder':
+                            # Add subfolder to processing queue
+                            folders_to_process.append(item.id)
+                            self.logger.debug(f"Found subfolder: {item.name} (ID: {item.id})")
+                            
+                except Exception as e:
+                    self.logger.warning(f"Error processing folder {current_folder_id}: {e}")
+                    continue
+            
+            self.logger.info(f"Listed {len(all_files)} files recursively from folder {folder_id}")
+            return all_files
+            
+        except Exception as e:
+            self.logger.error(f"Error listing files recursively from folder {folder_id}: {e}")
+            return []
+    
+    def find_folder_by_name(self, folder_name: str, parent_folder_id: str = "0") -> Optional[str]:
+        """
+        Find a folder by name within a parent folder.
+        
+        Args:
+            folder_name (str): Name of the folder to find
+            parent_folder_id (str): Parent folder ID to search in
+            
+        Returns:
+            Optional[str]: Folder ID if found, None otherwise
+        """
+        try:
+            if not self.client:
+                self.logger.error("Not authenticated")
+                return None
+            
+            folder = self.client.folder(parent_folder_id)
+            items = folder.get_items()
+            
+            for item in items:
+                if item.type == 'folder' and item.name == folder_name:
+                    self.logger.info(f"Found folder '{folder_name}' with ID: {item.id}")
+                    return item.id
+            
+            self.logger.warning(f"Folder '{folder_name}' not found in parent folder {parent_folder_id}")
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Error finding folder '{folder_name}': {e}")
+            return None
     
     def get_folder_files(self, folder_id: str) -> List[Dict]:
         """Get all files from a folder (alias for list_files)"""

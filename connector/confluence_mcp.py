@@ -92,6 +92,9 @@ class ConfluenceMCPConnector:
         self.azure_openai_api_key = os.getenv("AZURE_OPENAI_API_KEY")
         self.azure_openai_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
         
+        # Load Confluence pages from environment
+        self.confluence_pages = self._load_confluence_pages_from_env()
+        
         # Validate and initialize
         try:
             self._validate_environment_variables()
@@ -112,6 +115,39 @@ class ConfluenceMCPConnector:
     def is_available(self) -> bool:
         """Check if Confluence MCP connector is available and configured."""
         return MCP_AVAILABLE and self.agent is not None
+    
+    def _load_confluence_pages_from_env(self) -> List[str]:
+        """Load Confluence page titles from environment variables."""
+        pages = []
+        
+        # Method 1: Load from comma-separated CONFLUENCE_PAGES
+        confluence_pages_str = os.getenv("CONFLUENCE_PAGES")
+        if confluence_pages_str:
+            pages.extend([page.strip() for page in confluence_pages_str.split(',') if page.strip()])
+        
+        # Method 2: Load from individual CONFLUENCE_PAGE_X variables
+        page_num = 1
+        while True:
+            page_env_var = f"CONFLUENCE_PAGE_{page_num}"
+            page_title = os.getenv(page_env_var)
+            if page_title:
+                pages.append(page_title.strip())
+                page_num += 1
+            else:
+                break
+        
+        # Remove duplicates while preserving order
+        unique_pages = []
+        for page in pages:
+            if page not in unique_pages:
+                unique_pages.append(page)
+        
+        self.logger.info(f"Loaded {len(unique_pages)} Confluence pages from environment: {unique_pages}")
+        return unique_pages
+    
+    def get_configured_pages(self) -> List[str]:
+        """Get the list of Confluence pages configured in environment variables."""
+        return self.confluence_pages.copy()
     
     def _validate_environment_variables(self):
         """Validate that all required environment variables are set."""
@@ -563,13 +599,61 @@ async def test_confluence_mcp():
     
     print("✓ Confluence MCP connector initialized")
     
-    # Test with sample pages
-    test_pages = ["Chest X-Ray Medical Document", "Chest X-ray Report Analysis"]
+    # Get pages from environment configuration
+    test_pages = connector.get_configured_pages()
+    if not test_pages:
+        print("⚠️ No Confluence pages configured in environment variables")
+        print("Add CONFLUENCE_PAGES or CONFLUENCE_PAGE_X variables to .env.dev")
+        return
+    
+    print(f"📋 Found {len(test_pages)} configured pages: {test_pages}")
+    
+    # Download the configured pages
     result = await connector.download_multiple_pages(test_pages)
     
-    print(f"Downloaded {result['successful_downloads']}/{result['total_pages']} pages")
+    print(f"📥 Downloaded {result['successful_downloads']}/{result['total_pages']} pages")
     for file_path in result['downloaded_files']:
-        print(f"  - {file_path}")
+        print(f"  ✓ {file_path}")
+    
+    if result['failed_downloads'] > 0:
+        print(f"❌ Failed downloads: {result['failed_downloads']}")
+        for individual_result in result['individual_results']:
+            if not individual_result['success']:
+                print(f"  ❌ {individual_result['page_title']}: {individual_result['error']}")
+
+
+async def download_configured_confluence_pages(connector: ConfluenceMCPConnector, download_dir: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Download all pages configured in environment variables.
+    
+    Args:
+        connector: The Confluence MCP connector instance
+        download_dir: Optional directory for downloads
+        
+    Returns:
+        Dictionary with download results
+    """
+    if not connector.is_available():
+        return {
+            "success": False,
+            "error": "Confluence MCP connector not available"
+        }
+    
+    configured_pages = connector.get_configured_pages()
+    if not configured_pages:
+        return {
+            "success": False,
+            "error": "No Confluence pages configured in environment variables"
+        }
+    
+    print(f"📋 Downloading {len(configured_pages)} configured Confluence pages...")
+    result = await connector.download_multiple_pages(configured_pages, download_dir)
+    
+    return {
+        "success": True,
+        "configured_pages": configured_pages,
+        "download_result": result
+    }
 
 
 if __name__ == "__main__":

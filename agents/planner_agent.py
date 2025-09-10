@@ -150,6 +150,60 @@ class PlannerAgent:
             self.logger.error(f"Failed to initialize Confluence connector: {e}")
             self.connectors['confluence'] = None
     
+    def create_ingestion_plan(self, doc_uri: str, metadata: Optional[Dict[str, Any]] = None, 
+                             content: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Create an ingestion plan for a given document URI.
+        This is the main API entry point for creating ingestion plans.
+        
+        Args:
+            doc_uri: Document URI to create plan for
+            metadata: Optional metadata for the document
+            content: Optional content if already fetched
+            
+        Returns:
+            Dict containing the ingestion plan
+        """
+        try:
+            # If content is provided, use it for classification
+            if content:
+                if isinstance(content, bytes):
+                    content = content.decode('utf-8', errors='ignore')
+                
+                # Use LLM classification if available
+                if self.is_llm_available():
+                    # Run async classification in sync context
+                    import asyncio
+                    try:
+                        loop = asyncio.get_event_loop()
+                    except RuntimeError:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                    
+                    classification_result = loop.run_until_complete(
+                        self.classify_document_with_llm(content, doc_uri, metadata)
+                    )
+                else:
+                    # Use fallback classification
+                    classification_result = self._fallback_classification(content, doc_uri, metadata)
+            else:
+                # No content provided, use fallback based on URI and metadata
+                classification_result = self._fallback_classification("", doc_uri, metadata)
+            
+            # Generate the ingestion plan
+            plan = self.generate_ingestion_plan(classification_result)
+            
+            self.logger.info(f"Created ingestion plan for {doc_uri}")
+            return plan
+            
+        except Exception as e:
+            self.logger.error(f"Failed to create ingestion plan for {doc_uri}: {e}")
+            # Return a basic fallback plan
+            plan_id = generate_uuid()
+            steps = [create_ingestion_step("1", "vector_ingestion", doc_uri)]
+            plan = create_ingestion_plan_schema(plan_id, steps)
+            return plan
+    
     def _load_guidelines(self) -> str:
         """Load classification guidelines from file."""
         try:

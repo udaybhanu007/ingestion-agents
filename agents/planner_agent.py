@@ -51,7 +51,8 @@ class PlannerAgent:
     
     def __init__(self, env_file: str = ".env.dev"):
         """
-        Initialize the Planner Agent with Azure OpenAI and connectors.
+        Initialize the Planner Agent with Azure OpenAI client.
+        Connectors are lazy-loaded based on doc_uri.
         
         Args:
             env_file: Path to environment file for credentials
@@ -65,8 +66,8 @@ class PlannerAgent:
         # Initialize Azure OpenAI client
         self._initialize_llm()
         
-        # Initialize connectors
-        self._initialize_connectors()
+        # Lazy-loaded connectors (initialized only when needed)
+        self._connectors = {}
         
         # Load guidelines
         self.guidelines = self._load_guidelines()
@@ -116,45 +117,69 @@ class PlannerAgent:
             self.logger.error(f"Failed to initialize Azure OpenAI: {e}")
             self.azure_openai = None
     
-    def _initialize_connectors(self):
-        """Initialize all available connectors."""
-        self.connectors = {}
-        
-        # Azure connector
-        try:
-            self.connectors['azure'] = AzureConnector(env_file=self.env_file)
-            if hasattr(self.connectors['azure'], 'blob_service_client') and self.connectors['azure'].blob_service_client:
-                self.logger.info("Azure connector initialized successfully")
+    def _get_connector_type_from_uri(self, doc_uri: str) -> str:
+        """Determine connector type from document URI."""
+        if doc_uri.startswith("azure://"):
+            return "azure"
+        elif doc_uri.startswith("box://"):
+            return "box"
+        elif doc_uri.startswith("confluence://"):
+            return "confluence"
+        else:
+            # Default fallback or determine from other patterns
+            if "blob.core.windows.net" in doc_uri:
+                return "azure"
+            elif "box.com" in doc_uri:
+                return "box"
+            elif "confluence" in doc_uri.lower():
+                return "confluence"
             else:
-                self.logger.warning("Azure connector initialization failed")
-        except Exception as e:
-            self.logger.error(f"Failed to initialize Azure connector: {e}")
-            self.connectors['azure'] = None
-        
-        # Box connector
-        try:
-            self.connectors['box'] = BoxConnector(env_file=self.env_file)
-            if hasattr(self.connectors['box'], 'is_available') and self.connectors['box'].is_available():
-                self.logger.info("Box connector initialized successfully")
-            else:
-                self.logger.warning("Box connector initialization failed")
-        except Exception as e:
-            self.logger.error(f"Failed to initialize Box connector: {e}")
-            self.connectors['box'] = None
-        
-        # Confluence connector
-        try:
-            self.connectors['confluence'] = ConfluenceMCPConnector(env_file=self.env_file)
-            self.logger.info("Confluence MCP connector initialized successfully")
-        except Exception as e:
-            self.logger.error(f"Failed to initialize Confluence connector: {e}")
-            self.connectors['confluence'] = None
+                raise ValueError(f"Unable to determine connector type for URI: {doc_uri}")
     
-    def create_ingestion_plan(self, doc_uri: str, metadata: Optional[Dict[str, Any]] = None, 
-                             content: Optional[str] = None) -> Dict[str, Any]:
+    async def _get_connector(self, doc_uri: str):
+        """Get or initialize connector based on document URI (lazy loading)."""
+        connector_type = self._get_connector_type_from_uri(doc_uri)
+        
+        # Return existing connector if already initialized
+        if connector_type in self._connectors and self._connectors[connector_type] is not None:
+            return self._connectors[connector_type]
+        
+        # Initialize connector based on type
+        try:
+            if connector_type == "azure":
+                self._connectors['azure'] = AzureConnector(env_file=self.env_file)
+                if hasattr(self._connectors['azure'], 'blob_service_client') and self._connectors['azure'].blob_service_client:
+                    self.logger.info("Azure connector initialized successfully")
+                    return self._connectors['azure']
+                else:
+                    self.logger.warning("Azure connector initialization failed")
+                    self._connectors['azure'] = None
+                    
+            elif connector_type == "box":
+                self._connectors['box'] = BoxConnector(env_file=self.env_file)
+                if hasattr(self._connectors['box'], 'is_available') and self._connectors['box'].is_available():
+                    self.logger.info("Box connector initialized successfully")
+                    return self._connectors['box']
+                else:
+                    self.logger.warning("Box connector initialization failed")
+                    self._connectors['box'] = None
+                    
+            elif connector_type == "confluence":
+                self._connectors['confluence'] = ConfluenceMCPConnector(env_file=self.env_file)
+                self.logger.info("Confluence MCP connector initialized successfully")
+                return self._connectors['confluence']
+                
+        except Exception as e:
+            self.logger.error(f"Failed to initialize {connector_type} connector: {e}")
+            self._connectors[connector_type] = None
+        
+        return None
+
+    async def create_ingestion_plan_async(self, doc_uri: str, metadata: Optional[Dict[str, Any]] = None, 
+                                        content: Optional[str] = None) -> Dict[str, Any]:
         """
-        Create an ingestion plan for a given document URI.
-        This is the main API entry point for creating ingestion plans.
+        Create an ingestion plan for a given document URI asynchronously.
+        This is the main async API entry point for creating ingestion plans.
         
         Args:
             doc_uri: Document URI to create plan for
@@ -165,30 +190,24 @@ class PlannerAgent:
             Dict containing the ingestion plan
         """
         try:
-            # If content is provided, use it for classification
+            # Content should always be provided or fetched
             if content:
                 if isinstance(content, bytes):
                     content = content.decode('utf-8', errors='ignore')
                 
-                # Use LLM classification if available
-                if self.is_llm_available():
-                    # Run async classification in sync context
-                    import asyncio
-                    try:
-                        loop = asyncio.get_event_loop()
-                    except RuntimeError:
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                    
-                    classification_result = loop.run_until_complete(
-                        self.classify_document_with_llm(content, doc_uri, metadata)
-                    )
-                else:
-                    # Use fallback classification
-                    classification_result = self._fallback_classification(content, doc_uri, metadata)
+                # Use LLM classification
+                classification_result = await self.classify_document_with_llm(content, doc_uri, metadata)
             else:
-                # No content provided, use fallback based on URI and metadata
-                classification_result = self._fallback_classification("", doc_uri, metadata)
+                # Fetch content from connector
+                connector = await self._get_connector(doc_uri)
+                if connector:
+                    content = await self._fetch_content_async(connector, doc_uri)
+                    if content:
+                        classification_result = await self.classify_document_with_llm(content, doc_uri, metadata)
+                    else:
+                        raise ValueError(f"Unable to fetch content for {doc_uri}")
+                else:
+                    raise ValueError(f"No connector available for {doc_uri}")
             
             # Generate the ingestion plan
             plan = self.generate_ingestion_plan(classification_result)
@@ -198,11 +217,70 @@ class PlannerAgent:
             
         except Exception as e:
             self.logger.error(f"Failed to create ingestion plan for {doc_uri}: {e}")
-            # Return a basic fallback plan
-            plan_id = generate_uuid()
-            steps = [create_ingestion_step("1", "vector_ingestion", doc_uri)]
-            plan = create_ingestion_plan_schema(plan_id, steps)
-            return plan
+            # Re-raise the exception since content is mandatory
+            raise ValueError(f"Ingestion plan creation failed for {doc_uri}: {str(e)}")
+
+    async def _fetch_content_async(self, connector, doc_uri: str) -> Optional[str]:
+        """Fetch content from connector asynchronously."""
+        try:
+            connector_type = self._get_connector_type_from_uri(doc_uri)
+            
+            if connector_type == "azure":
+                # Parse Azure URI: azure://container/blob_name
+                parts = doc_uri.replace("azure://", "").split("/", 1)
+                if len(parts) == 2:
+                    container_name, blob_name = parts
+                    content = connector.download_blob(container_name, blob_name)
+                    return content if isinstance(content, str) else content.decode('utf-8', errors='ignore')
+                    
+            elif connector_type == "box":
+                # Parse Box URI: box://file/file_id
+                parts = doc_uri.replace("box://", "").split("/")
+                if len(parts) >= 2 and parts[0] == "file":
+                    file_id = parts[1]
+                    download_result = connector.download_file(file_id)
+                    if download_result and isinstance(download_result, str):
+                        with open(download_result, 'r', encoding='utf-8', errors='ignore') as f:
+                            return f.read()
+                            
+            elif connector_type == "confluence":
+                # Parse Confluence URI: confluence://page/page_title
+                parts = doc_uri.replace("confluence://", "").split("/", 1)
+                if len(parts) == 2 and parts[0] == "page":
+                    page_title = parts[1]
+                    result = await connector.download_page_content(page_title)
+                    if result.get('success'):
+                        return result.get('content', '')
+                        
+        except Exception as e:
+            self.logger.error(f"Failed to fetch content for {doc_uri}: {e}")
+            
+        return None
+
+    def create_ingestion_plan(self, doc_uri: str, metadata: Optional[Dict[str, Any]] = None, 
+                             content: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Create an ingestion plan for a given document URI.
+        This is a sync wrapper for the async method.
+        
+        Args:
+            doc_uri: Document URI to create plan for
+            metadata: Optional metadata for the document
+            content: Optional content if already fetched
+            
+        Returns:
+            Dict containing the ingestion plan
+        """
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        return loop.run_until_complete(
+            self.create_ingestion_plan_async(doc_uri, metadata, content)
+        )
     
     def _load_guidelines(self) -> str:
         """Load classification guidelines from file."""
@@ -218,7 +296,7 @@ class PlannerAgent:
     
     def get_available_connectors(self) -> List[str]:
         """Get list of available and initialized connectors."""
-        return [name for name, connector in self.connectors.items() if connector is not None]
+        return [name for name, connector in self._connectors.items() if connector is not None]
     
     def is_llm_available(self) -> bool:
         """Check if Azure OpenAI LLM is available."""
@@ -238,8 +316,7 @@ class PlannerAgent:
             Dict containing classification results and reasoning
         """
         if not self.is_llm_available():
-            self.logger.warning("LLM not available, falling back to rule-based classification")
-            return self._fallback_classification(content, doc_uri, metadata)
+            raise ValueError("Azure OpenAI LLM is not available. Please check your configuration.")
         
         # Clean and prepare content
         clean_content = clean_text(content)
@@ -286,8 +363,8 @@ class PlannerAgent:
             
         except Exception as e:
             self.logger.error(f"LLM classification failed for {doc_uri}: {e}")
-            # Fallback to rule-based classification
-            return self._fallback_classification(clean_content, doc_uri, metadata)
+            # Re-raise the exception since we don't have fallback anymore
+            raise ValueError(f"Document classification failed for {doc_uri}: {str(e)}")
     
     def _create_classification_prompt(self, content: str, doc_uri: str, 
                                       structure_analysis: Dict, entities: List[str],
@@ -347,51 +424,31 @@ Please respond with a JSON object containing:
                                   structure_analysis: Dict, entities: List[str]) -> Dict[str, Any]:
         """Process and validate LLM classification result."""
         
+        # Validate required fields are present in LLM result
+        required_fields = ['classification', 'document_type', 'reasoning']
+        missing_fields = [field for field in required_fields if field not in llm_result]
+        
+        if missing_fields:
+            raise ValueError(f"LLM result missing required fields: {missing_fields}. "
+                           f"LLM must provide: {required_fields}")
+        
         # Extract classification
-        classification = llm_result.get('classification', 'VECTOR_STORE_ONLY')
-        document_type = llm_result.get('document_type', 'unknown')
-        reasoning = llm_result.get('reasoning', {})
-        key_indicators = llm_result.get('key_indicators', [])
+        classification = llm_result['classification']
+        document_type = llm_result['document_type']
+        reasoning = llm_result['reasoning']
+        key_indicators = llm_result.get('key_indicators', [])  # Optional field
         
         # Validate classification
         valid_classifications = ['VECTOR_STORE_ONLY', 'KNOWLEDGE_GRAPH_ONLY', 'DUAL_INGESTION']
         if classification not in valid_classifications:
-            self.logger.warning(f"Invalid classification {classification}, defaulting to VECTOR_STORE_ONLY")
-            classification = 'VECTOR_STORE_ONLY'
+            raise ValueError(f"Invalid classification '{classification}'. "
+                           f"Must be one of: {valid_classifications}")
         
         return {
             'doc_uri': doc_uri,
             'classification': classification,
             'document_type': document_type,
             'reasoning': reasoning,
-            'key_indicators': key_indicators
-        }
-    
-    def _fallback_classification(self, content: str, doc_uri: str, 
-                                 metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Fallback rule-based classification when LLM fails."""
-        self.logger.info(f"Using fallback classification for {doc_uri}")
-        
-        content_lower = content.lower()
-        structure_analysis = analyze_document_structure(content)
-        
-        # Simple rule-based classification
-        if any(keyword in content_lower for keyword in ['api', 'endpoint', 'schema', 'database', 'medical', 'treatment', 'protocol']):
-            classification = 'DUAL_INGESTION'
-            document_type = 'technical_documentation'
-        elif any(keyword in content_lower for keyword in ['org chart', 'hierarchy', 'workflow', 'reports to', '├──', '└──']):
-            classification = 'KNOWLEDGE_GRAPH_ONLY'
-            document_type = 'organizational_chart'
-        else:
-            classification = 'VECTOR_STORE_ONLY'
-            document_type = 'general_document'
-        
-        return {
-            'doc_uri': doc_uri,
-            'classification': classification,
-            'document_type': document_type,
-            'reasoning': {'fallback': 'Used rule-based classification due to LLM unavailability'},
-            'key_indicators': ['fallback_classification']
         }
     
     def generate_ingestion_plan(self, classification_result: Dict[str, Any]) -> Dict[str, Any]:
@@ -613,273 +670,3 @@ Please respond with a JSON object containing:
     def save_results(self, results: List[Dict[str, Any]], output_file: str = "ingestion_plans.json") -> bool:
         """Save classification and planning results to JSON file."""
         return save_json(results, output_file)
-
-
-# Example usage
-async def main():
-    """Example usage of the Planner Agent with real connectors."""
-    
-    # Initialize the Planner Agent
-    planner = PlannerAgent()
-    
-    print("Available connectors:", planner.get_available_connectors())
-    print("LLM available:", planner.is_llm_available())
-    
-    results = []
-    
-    # Process documents from Azure Blob Storage (if available)
-    if 'azure' in planner.get_available_connectors():
-        print("\n--- Processing Azure Documents ---")
-        try:
-            # Replace with your actual container name
-            container_name = os.getenv("AZURE_CONTAINER_NAME", "documents")
-            prefix = os.getenv("AZURE_BLOB_PREFIX", None)  # Optional prefix filter
-            max_docs = int(os.getenv("MAX_DOCS_PER_SOURCE", "5"))
-            
-            azure_results = await planner.process_azure_documents(
-                container_name=container_name,
-                prefix=prefix,
-                max_docs=max_docs
-            )
-            results.extend(azure_results)
-            print(f"Processed {len(azure_results)} Azure documents")
-            
-        except Exception as e:
-            print(f"Error processing Azure documents: {e}")
-    
-    # Process documents from Box (if available)
-    if 'box' in planner.get_available_connectors():
-        print("\n--- Processing Box Documents ---")
-        try:
-            # Replace with your actual folder ID (0 = root folder)
-            folder_id = os.getenv("BOX_FOLDER_ID", "0")
-            max_docs = int(os.getenv("MAX_DOCS_PER_SOURCE", "5"))
-            
-            box_results = await planner.process_box_documents(
-                folder_id=folder_id,
-                max_docs=max_docs
-            )
-            results.extend(box_results)
-            print(f"Processed {len(box_results)} Box documents")
-            
-        except Exception as e:
-            print(f"Error processing Box documents: {e}")
-    
-    # Process documents from Confluence (if available)
-    if 'confluence' in planner.get_available_connectors():
-        print("\n--- Processing Confluence Documents ---")
-        try:
-            # Get configured Confluence pages from environment
-            if planner.connectors.get('confluence') and planner.connectors['confluence'].is_available():
-                page_titles = planner.connectors['confluence'].get_configured_pages()
-                if not page_titles:
-                    # Fallback to environment variable if no pages configured
-                    page_titles_env = os.getenv("CONFLUENCE_PAGE_TITLES", "")
-                    if page_titles_env:
-                        page_titles = [title.strip() for title in page_titles_env.split(",")]
-                    else:
-                        # Default page titles for testing
-                        page_titles = [
-                            "API Documentation",
-                            "Project Overview", 
-                            "User Guide",
-                            "Technical Specifications"
-                        ]
-            else:
-                page_titles = []
-            
-            if page_titles:
-                confluence_results = await planner.process_confluence_documents(page_titles)
-                results.extend(confluence_results)
-                print(f"Processed {len(confluence_results)} Confluence documents")
-            else:
-                print("No Confluence pages configured or connector not available")
-                
-        except Exception as e:
-            print(f"Error processing Confluence documents: {e}")
-    
-    # If no connectors are available, provide sample data for testing
-    if not results and not planner.get_available_connectors():
-        print("\n--- No connectors available, using sample document for testing ---")
-        sample_documents = [
-            {
-                'uri': 'example://sample/medical_protocol.txt',
-                'content': '''
-                Medical Treatment Protocol for Diabetes Management
-                
-                1. Patient Assessment
-                   1.1 Blood glucose monitoring
-                   1.2 HbA1c testing
-                   1.3 Complication screening
-                
-                2. Treatment Plan
-                   2.1 Medication Management
-                       - Metformin is first-line treatment
-                       - Insulin therapy depends on blood glucose levels
-                       - Drug interactions must be monitored
-                   
-                   2.2 Lifestyle Interventions
-                       - Diet modification
-                       - Exercise program
-                       - Weight management
-                
-                3. Monitoring Protocol
-                   - Daily glucose checks
-                   - Quarterly HbA1c
-                   - Annual eye examination
-                
-                Drug Interactions:
-                - Metformin interacts with contrast agents
-                - Insulin dosage affects other medications
-                - Monitor for hypoglycemia with combination therapy
-                ''',
-                'metadata': {'type': 'medical_document'},
-                'source': 'example'
-            }
-        ]
-        
-        # Classify and plan sample documents
-        results = await planner.classify_and_plan_documents(sample_documents)
-    
-    # Display results
-    if results:
-        print(f"\n=== PROCESSING COMPLETE ===")
-        print(f"Total documents processed: {len(results)}")
-        
-        # Classification summary
-        vector_only = [r for r in results if r['classification'] == 'VECTOR_STORE_ONLY']
-        graph_only = [r for r in results if r['classification'] == 'KNOWLEDGE_GRAPH_ONLY']
-        dual = [r for r in results if r['classification'] == 'DUAL_INGESTION']
-        
-        print(f"\nClassification Summary:")
-        print(f"  Vector Store Only: {len(vector_only)}")
-        print(f"  Knowledge Graph Only: {len(graph_only)}")
-        print(f"  Dual Ingestion: {len(dual)}")
-        
-        for i, result in enumerate(results, 1):
-            print(f"\n--- Classification Result {i} ---")
-            print(f"Document: {result['doc_uri']}")
-            print(f"Source: {result['source']}")
-            print(f"Classification: {result['classification']}")
-            print(f"Document Type: {result['document_type']}")
-            print(f"Reasoning: {result['reasoning']}")
-            
-            # Show key indicators
-            if result.get('key_indicators'):
-                print(f"Key Indicators: {', '.join(result['key_indicators'])}")
-            
-            # Show ingestion plan summary
-            plan = result.get('ingestion_plan', {})
-            steps = plan.get('steps', [])
-            print(f"Ingestion Steps: {len(steps)} step(s)")
-            for step in steps:
-                task_id = step.get('task_id', 'unknown')
-                tool = step.get('tool', 'unknown')
-                print(f"  - Task {task_id}: {tool}")
-        
-        # Save results with timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_file = f"planner_agent_results_{timestamp}.json"
-        
-        if planner.save_results(results, output_file):
-            print(f"\nResults saved to: {output_file}")
-        else:
-            print("\nFailed to save results")
-    else:
-        print("\nNo documents were processed")
-
-
-async def process_specific_sources():
-    """Example of processing specific document sources."""
-    planner = PlannerAgent()
-    
-    # Process only Azure documents
-    if 'azure' in planner.get_available_connectors():
-        print("Processing Azure documents only...")
-        results = await planner.process_azure_documents(
-            container_name="my-documents",
-            prefix="reports/",
-            max_docs=20
-        )
-        
-        # Filter results by classification
-        vector_only = [r for r in results if r['classification'] == 'VECTOR_STORE_ONLY']
-        graph_only = [r for r in results if r['classification'] == 'KNOWLEDGE_GRAPH_ONLY']
-        dual = [r for r in results if r['classification'] == 'DUAL_INGESTION']
-        
-        print(f"Classification Summary:")
-        print(f"  Vector Store Only: {len(vector_only)}")
-        print(f"  Knowledge Graph Only: {len(graph_only)}")
-        print(f"  Dual Ingestion: {len(dual)}")
-        
-        return results
-    else:
-        print("Azure connector not available")
-        return []
-
-
-async def batch_process_with_config():
-    """Example of batch processing with configuration."""
-    planner = PlannerAgent()
-    
-    # Configuration for batch processing
-    config = {
-        'azure': {
-            'enabled': True,
-            'container_name': os.getenv('AZURE_CONTAINER_NAME', 'documents'),
-            'prefix': os.getenv('AZURE_BLOB_PREFIX'),
-            'max_docs': 10
-        },
-        'box': {
-            'enabled': True,
-            'folder_id': os.getenv('BOX_FOLDER_ID', '0'),
-            'max_docs': 10
-        },
-        'confluence': {
-            'enabled': True,
-            'page_titles': ['API Documentation', 'User Guide', 'Architecture Overview'],
-            'max_docs': 5
-        }
-    }
-    
-    all_results = []
-    
-    # Process each configured source
-    for source, source_config in config.items():
-        if not source_config.get('enabled', False):
-            continue
-            
-        if source not in planner.get_available_connectors():
-            print(f"Skipping {source}: connector not available")
-            continue
-            
-        print(f"\nProcessing {source} documents...")
-        
-        try:
-            if source == 'azure':
-                results = await planner.process_azure_documents(
-                    container_name=source_config['container_name'],
-                    prefix=source_config.get('prefix'),
-                    max_docs=source_config['max_docs']
-                )
-            elif source == 'box':
-                results = await planner.process_box_documents(
-                    folder_id=source_config['folder_id'],
-                    max_docs=source_config['max_docs']
-                )
-            elif source == 'confluence':
-                results = await planner.process_confluence_documents(
-                    source_config['page_titles']
-                )
-            
-            all_results.extend(results)
-            print(f"  Processed {len(results)} documents from {source}")
-            
-        except Exception as e:
-            print(f"  Error processing {source}: {e}")
-    
-    return all_results
-
-
-if __name__ == "__main__":
-    asyncio.run(main())

@@ -441,12 +441,12 @@ def extract_metadata_from_uri(doc_uri: str) -> Dict[str, str]:
 
 def validate_json_plan(plan: Dict[str, Any]) -> bool:
     """Validate that a plan follows the correct JSON schema."""
-    required_fields = ['plan_id', 'steps']
+    required_fields = ['steps']
     
     # Check required top-level fields
     for field in required_fields:
         if field not in plan:
-            logging.error(f"Missing required field: {field}")
+            logging.error(f"Missing required: {field}")
             return False
     
     # Validate plan_id is a valid UUID

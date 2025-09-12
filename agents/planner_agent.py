@@ -190,27 +190,29 @@ class PlannerAgent:
             Dict containing the ingestion plan
         """
         try:
+            fetched_content = content
+            
             # Content should always be provided or fetched
-            if content:
-                if isinstance(content, bytes):
-                    content = content.decode('utf-8', errors='ignore')
+            if fetched_content:
+                if isinstance(fetched_content, bytes):
+                    fetched_content = fetched_content.decode('utf-8', errors='ignore')
                 
                 # Use LLM classification
-                classification_result = await self.classify_document_with_llm(content, doc_uri, metadata)
+                classification_result = await self.classify_document_with_llm(fetched_content, doc_uri, metadata)
             else:
                 # Fetch content from connector
                 connector = await self._get_connector(doc_uri)
                 if connector:
-                    content = await self._fetch_content_async(connector, doc_uri)
-                    if content:
-                        classification_result = await self.classify_document_with_llm(content, doc_uri, metadata)
+                    fetched_content = await self._fetch_content_async(connector, doc_uri)
+                    if fetched_content:
+                        classification_result = await self.classify_document_with_llm(fetched_content, doc_uri, metadata)
                     else:
                         raise ValueError(f"Unable to fetch content for {doc_uri}")
                 else:
                     raise ValueError(f"No connector available for {doc_uri}")
             
-            # Generate the ingestion plan
-            plan = self.generate_ingestion_plan(classification_result)
+            # Generate the ingestion plan with content
+            plan = self.generate_ingestion_plan(classification_result, fetched_content)
             
             self.logger.info(f"Created ingestion plan for {doc_uri}")
             return plan
@@ -451,12 +453,13 @@ Please respond with a JSON object containing:
             'reasoning': reasoning,
         }
     
-    def generate_ingestion_plan(self, classification_result: Dict[str, Any]) -> Dict[str, Any]:
+    def generate_ingestion_plan(self, classification_result: Dict[str, Any], content: Optional[str] = None) -> Dict[str, Any]:
         """
         Generate ingestion plan based on classification result.
         
         Args:
             classification_result: Result from classify_document_with_llm()
+            content: Document content to include in plan steps
             
         Returns:
             JSON plan following the specified schema
@@ -467,18 +470,18 @@ Please respond with a JSON object containing:
         plan_id = generate_uuid()
         
         if classification == 'VECTOR_STORE_ONLY':
-            steps = [create_ingestion_step("1", "vector_ingestion", doc_uri)]
+            steps = [create_ingestion_step("1", "vector_ingestion", doc_uri, content=content)]
         elif classification == 'KNOWLEDGE_GRAPH_ONLY':
-            steps = [create_ingestion_step("1", "graph_ingestion", doc_uri)]
+            steps = [create_ingestion_step("1", "graph_ingestion", doc_uri, content=content)]
         elif classification == 'DUAL_INGESTION':
             steps = [
-                create_ingestion_step("1", "vector_ingestion", doc_uri),
-                create_ingestion_step("2", "graph_ingestion", doc_uri, depends_on=["1"])
+                create_ingestion_step("1", "vector_ingestion", doc_uri, content=content),
+                create_ingestion_step("2", "graph_ingestion", doc_uri, depends_on=["1"], content=content)
             ]
         else:
             # Default to vector ingestion
             self.logger.warning(f"Unknown classification {classification}, defaulting to vector ingestion")
-            steps = [create_ingestion_step("1", "vector_ingestion", doc_uri)]
+            steps = [create_ingestion_step("1", "vector_ingestion", doc_uri, content=content)]
         
         plan = create_ingestion_plan_schema(plan_id, steps)
         
@@ -627,7 +630,7 @@ Please respond with a JSON object containing:
                 )
                 
                 # Generate ingestion plan
-                ingestion_plan = self.generate_ingestion_plan(classification_result)
+                ingestion_plan = self.generate_ingestion_plan(classification_result, doc['content'])
                 
                 # Combine results
                 result = {

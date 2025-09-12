@@ -518,16 +518,22 @@ def create_ingestion_plan_schema(plan_id: str, steps: List[Dict[str, Any]]) -> D
 
 
 def create_ingestion_step(task_id: str, tool: str, doc_uri: str, 
-                         depends_on: Optional[List[str]] = None) -> Dict[str, Any]:
+                         depends_on: Optional[List[str]] = None, content: Optional[str] = None) -> Dict[str, Any]:
     """Create a single ingestion step following the required schema."""
     if depends_on is None:
         depends_on = []
     
+    args = {
+        "doc_uri": doc_uri
+    }
+    
+    # Add content to args if provided
+    if content is not None:
+        args["content"] = content
+    
     return {
         "task_id": task_id,
         "tool": tool,
-        "args": {
-            "doc_uri": doc_uri
-        },
+        "args": args,
         "depends_on": depends_on
     }

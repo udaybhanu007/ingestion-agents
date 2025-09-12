@@ -16,32 +16,20 @@ from datetime import datetime
 # Add the parent directory to sys.path to import modules
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-# Import the new URI resolver
-try:
-    from utils.uri_resolver import URIContentResolver
-except ImportError as e:
-    logging.warning(f"URI resolver import failed: {e}")
-    URIContentResolver = None
-
-# Import connectors
-try:
-    from connector.azure import AzureConnector
-    from connector.box import BoxConnector
-    from connector.confluence_mcp import ConfluenceMCPConnector
-except ImportError as e:
-    logging.warning(f"Connector import failed: {e}")
+# Note: Connectors and URI resolver are no longer needed since content 
+# is passed from planner agent in plan steps (Approach 2)
 
 # Import ingestion tools
 try:
     sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'agent-ingestion'))
     from tools.vector_tool import VectorIngestionTool
     from tools.graph_tool import GraphIngestionTool
-    from config import IngestionConfig
+    TOOLS_AVAILABLE = True
 except ImportError as e:
     logging.warning(f"Agent ingestion tools import failed: {e}")
     VectorIngestionTool = None
     GraphIngestionTool = None
-    IngestionConfig = None
+    TOOLS_AVAILABLE = False
 
 
 class ExecutionAgentV2:
@@ -52,59 +40,53 @@ class ExecutionAgentV2:
     def __init__(self):
         """Initialize the execution agent."""
         self.logger = logging.getLogger(__name__)
-        self.connectors = self._initialize_connectors()
         self.tools = self._initialize_tools()
         
-        # Initialize URI resolver for enhanced content access
-        self.uri_resolver = URIContentResolver() if URIContentResolver else None
-        if self.uri_resolver:
-            self.logger.info("✅ URI resolver initialized")
-        else:
-            self.logger.warning("⚠️ URI resolver not available")
-    
-    def _initialize_connectors(self) -> Dict[str, Any]:
-        """Initialize data source connectors."""
-        connectors = {}
-        
-        try:
-            connectors['azure'] = AzureConnector()
-        except Exception as e:
-            self.logger.warning(f"Failed to initialize Azure connector: {e}")
-        
-        try:
-            connectors['box'] = BoxConnector()
-        except Exception as e:
-            self.logger.warning(f"Failed to initialize Box connector: {e}")
-        
-        try:
-            connectors['confluence'] = ConfluenceMCPConnector()
-        except Exception as e:
-            self.logger.warning(f"Failed to initialize Confluence connector: {e}")
-        
-        return connectors
+        # Note: Connectors and URI resolver removed - content comes from plan steps
     
     def _initialize_tools(self) -> Dict[str, Any]:
         """Initialize ingestion tools."""
         tools = {}
         
-        try:
-            if VectorIngestionTool and IngestionConfig:
-                config = IngestionConfig()
-                tools['vector_ingestion'] = VectorIngestionTool(config)
-            else:
-                self.logger.warning("VectorIngestionTool not available")
-        except Exception as e:
-            self.logger.warning(f"Failed to initialize vector tool: {e}")
+        self.logger.info(f"TOOLS_AVAILABLE: {TOOLS_AVAILABLE}")
+        self.logger.info(f"VectorIngestionTool: {VectorIngestionTool is not None}")
+        self.logger.info(f"GraphIngestionTool: {GraphIngestionTool is not None}")
         
+        # Try to initialize vector tool
         try:
-            if GraphIngestionTool and IngestionConfig:
-                config = IngestionConfig()
-                tools['graph_ingestion'] = GraphIngestionTool(config)
+            if TOOLS_AVAILABLE and VectorIngestionTool:
+                self.logger.info("Initializing VectorIngestionTool...")
+                tools['vector_ingestion'] = VectorIngestionTool()  # No config parameter needed
+                self.logger.info("✅ VectorIngestionTool initialized successfully")
             else:
-                self.logger.warning("GraphIngestionTool not available")
+                self.logger.warning("❌ VectorIngestionTool dependencies not available")
+                if not TOOLS_AVAILABLE:
+                    self.logger.warning("  - Tools import failed")
+                if not VectorIngestionTool:
+                    self.logger.warning("  - VectorIngestionTool class not available")
         except Exception as e:
-            self.logger.warning(f"Failed to initialize graph tool: {e}")
+            self.logger.error(f"❌ Failed to initialize vector tool: {e}")
+            import traceback
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
         
+        # Try to initialize graph tool
+        try:
+            if TOOLS_AVAILABLE and GraphIngestionTool:
+                self.logger.info("Initializing GraphIngestionTool...")
+                tools['graph_ingestion'] = GraphIngestionTool()  # No config parameter needed
+                self.logger.info("✅ GraphIngestionTool initialized successfully")
+            else:
+                self.logger.warning("❌ GraphIngestionTool dependencies not available")
+                if not TOOLS_AVAILABLE:
+                    self.logger.warning("  - Tools import failed")
+                if not GraphIngestionTool:
+                    self.logger.warning("  - GraphIngestionTool class not available")
+        except Exception as e:
+            self.logger.error(f"❌ Failed to initialize graph tool: {e}")
+            import traceback
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
+        
+        self.logger.info(f"📋 Tools initialized: {list(tools.keys())}")
         return tools
     
     async def execute_planner_results(self, results_file: str) -> List[Dict[str, Any]]:
@@ -161,7 +143,7 @@ class ExecutionAgentV2:
         Execute an individual ingestion plan.
         
         Args:
-            plan: The ingestion plan with steps
+            plan: The ingestion plan with steps (content included in step args)
             doc_uri: Document URI
             source: Source system (azure, box, confluence)
             document_result: Full document result from planner
@@ -175,14 +157,16 @@ class ExecutionAgentV2:
             
             self.logger.info(f"Executing plan {plan_id} with {len(steps)} steps for {doc_uri}")
             
-            # Fetch document content
-            content = await self._fetch_content(doc_uri, source)
+            # Extract content from plan steps (Approach 2)
+            content = self._extract_content_from_steps(steps)
             if not content:
                 return {
                     'status': 'failed',
-                    'error': f'Failed to fetch content for {doc_uri}',
+                    'error': f'No content found in plan steps for {doc_uri}',
                     'steps_executed': 0
                 }
+            
+            self.logger.info(f"Using content from plan steps for {doc_uri} (length: {len(content)} chars)")
             
             # Execute steps with dependency management
             step_results = await self._execute_steps_with_dependencies(steps, content, doc_uri, document_result)
@@ -210,6 +194,252 @@ class ExecutionAgentV2:
                 'steps_executed': 0
             }
     
+    def _extract_content_from_steps(self, steps: List[Dict[str, Any]]) -> Optional[str]:
+        """
+        Extract document content from plan steps.
+        
+        Args:
+            steps: List of plan steps
+            
+        Returns:
+            Document content if found in any step, None otherwise
+        """
+        for step in steps:
+            args = step.get('args', {})
+            content = args.get('content')
+            if content:
+                self.logger.info(f"Found content in step {step.get('task_id', 'unknown')} (length: {len(content)} chars)")
+                return content
+        
+        self.logger.warning("No content found in any plan steps")
+        return None
+    
+    async def execute_plan_async(self, plan: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Execute a plan that contains content in its steps (Approach 2).
+        
+        Args:
+            plan: The ingestion plan with steps containing content
+            
+        Returns:
+            List of execution results for each step
+        """
+        try:
+            steps = plan.get('steps', [])
+            plan_id = plan.get('plan_id')
+            
+            self.logger.info(f"Executing plan {plan_id} with {len(steps)} steps using content from plan")
+            
+            # Extract content from plan steps
+            content = self._extract_content_from_steps(steps)
+            if not content:
+                return [{
+                    'status': 'failed',
+                    'error': 'No content found in plan steps',
+                    'plan_id': plan_id
+                }]
+            
+            # Execute each step
+            step_results = []
+            completed_tasks = set()
+            
+            for step in steps:
+                # Wait for dependencies
+                await self._wait_for_dependencies(step, completed_tasks)
+                
+                # Execute step with content from plan
+                step_result = await self._execute_single_step(step, content)
+                step_results.append(step_result)
+                completed_tasks.add(step["task_id"])
+                
+                self.logger.info(f"Completed step {step['task_id']}: {step['tool']} - {step_result.get('status', 'unknown')}")
+            
+            return step_results
+            
+        except Exception as e:
+            self.logger.error(f"Error executing plan: {str(e)}")
+            return [{
+                'status': 'failed',
+                'error': str(e),
+                'plan_id': plan.get('plan_id', 'unknown')
+            }]
+    
+    async def _wait_for_dependencies(self, step: Dict[str, Any], completed_tasks: set):
+        """Wait for step dependencies to complete."""
+        depends_on = step.get("depends_on", [])
+        
+        while not all(dep in completed_tasks for dep in depends_on):
+            await asyncio.sleep(0.1)  # Small delay to prevent busy waiting
+    
+    async def _execute_single_step(self, step: Dict[str, Any], content: str) -> Dict[str, Any]:
+        """
+        Execute a single step with content from plan.
+        
+        Args:
+            step: Step dictionary containing tool, args, and content
+            content: Document content
+            
+        Returns:
+            Execution result dictionary
+        """
+        task_id = step["task_id"]
+        tool = step["tool"]
+        args = step.get("args", {})
+        doc_uri = args.get("doc_uri", "")
+        
+        self.logger.info(f"Executing step {task_id}: {tool} for {doc_uri}")
+        
+        try:
+            # Route to appropriate tool handler
+            if tool == "vector_ingestion":
+                result = await self._execute_vector_ingestion_with_content(doc_uri, content, args)
+            elif tool == "graph_ingestion":
+                result = await self._execute_graph_ingestion_with_content(doc_uri, content, args)
+            else:
+                raise ValueError(f"Unknown tool: {tool}")
+            
+            return {
+                "task_id": task_id,
+                "tool": tool,
+                "status": "success",
+                "doc_uri": doc_uri,
+                "content_processed": len(content),
+                "result": result,
+                "executed_at": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            return {
+                "task_id": task_id,
+                "tool": tool,
+                "status": "failed",
+                "doc_uri": doc_uri,
+                "error": str(e),
+                "executed_at": datetime.now().isoformat()
+            }
+    
+    async def _execute_vector_ingestion_with_content(self, doc_uri: str, content: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute vector ingestion with document content using actual vector tool."""
+        try:
+            # Use actual vector ingestion tool if available
+            if 'vector_ingestion' in self.tools:
+                # Prepare metadata for vector ingestion
+                metadata = {
+                    'doc_uri': doc_uri,
+                    'source': args.get('source', 'unknown'),
+                    'document_type': args.get('document_type', 'unknown'),
+                    'ingestion_timestamp': datetime.now().isoformat()
+                }
+                
+                vector_tool = self.tools['vector_ingestion']
+                result = await vector_tool.ingest(content, metadata)
+                self.logger.info(f"Vector ingestion completed using actual tool for {doc_uri}")
+                return result
+            else:
+                # Fallback simulation if tool not available
+                self.logger.warning("Vector ingestion tool not available, using simulation")
+                await asyncio.sleep(1)  # Simulate processing time
+                
+                chunks = self._chunk_content(content)
+                
+                return {
+                    "operation": "vector_ingestion",
+                    "doc_uri": doc_uri,
+                    "chunks_created": len(chunks),
+                    "content_length": len(content),
+                    "embedding_model": "text-embedding-ada-002",
+                    "vector_store": "chroma",
+                    "message": f"Successfully ingested {len(chunks)} chunks into vector store (simulated)",
+                    "method": "simulation"
+                }
+        except Exception as e:
+            self.logger.error(f"Vector ingestion failed for {doc_uri}: {e}")
+            return {
+                "operation": "vector_ingestion",
+                "doc_uri": doc_uri,
+                "status": "failed",
+                "error": str(e),
+                "content_length": len(content)
+            }
+    
+    async def _execute_graph_ingestion_with_content(self, doc_uri: str, content: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute graph ingestion with document content using actual graph tool."""
+        try:
+            # Use actual graph ingestion tool if available
+            if 'graph_ingestion' in self.tools:
+                # Prepare metadata for graph ingestion
+                metadata = {
+                    'doc_uri': doc_uri,
+                    'source': args.get('source', 'unknown'),
+                    'document_type': args.get('document_type', 'unknown'),
+                    'node_type': 'Document',
+                    'ingestion_timestamp': datetime.now().isoformat()
+                }
+                
+                graph_tool = self.tools['graph_ingestion']
+                result = await graph_tool.ingest(content, metadata)
+                self.logger.info(f"Graph ingestion completed using actual tool for {doc_uri}")
+                return result
+            else:
+                # Fallback simulation if tool not available
+                self.logger.warning("Graph ingestion tool not available, using simulation")
+                await asyncio.sleep(1.5)  # Simulate processing time
+                
+                entities = self._extract_entities_simple(content)
+                relationships = self._extract_relationships_simple(content)
+                
+                return {
+                    "operation": "graph_ingestion",
+                    "doc_uri": doc_uri,
+                    "entities_extracted": len(entities),
+                    "relationships_extracted": len(relationships),
+                    "content_length": len(content),
+                    "graph_database": "neo4j",
+                    "message": f"Successfully created {len(entities)} entities and {len(relationships)} relationships (simulated)",
+                    "method": "simulation"
+                }
+        except Exception as e:
+            self.logger.error(f"Graph ingestion failed for {doc_uri}: {e}")
+            return {
+                "operation": "graph_ingestion",
+                "doc_uri": doc_uri,
+                "status": "failed",
+                "error": str(e),
+                "content_length": len(content)
+            }
+    
+    def _chunk_content(self, content: str, chunk_size: int = 1000) -> List[str]:
+        """Split content into chunks for vector processing."""
+        chunks = []
+        for i in range(0, len(content), chunk_size):
+            chunk = content[i:i + chunk_size]
+            if chunk.strip():
+                chunks.append(chunk.strip())
+        return chunks
+    
+    def _extract_entities_simple(self, content: str) -> List[str]:
+        """Extract entities from content (simplified example)."""
+        words = content.split()
+        # Simple heuristic: words starting with capital letters
+        entities = [word for word in words if word[0].isupper() and len(word) > 2]
+        return list(set(entities))[:10]  # Return first 10 unique entities
+    
+    def _extract_relationships_simple(self, content: str) -> List[Dict[str, str]]:
+        """Extract relationships from content (simplified example)."""
+        sentences = content.split('.')
+        relationships = []
+        
+        for sentence in sentences[:5]:  # Process first 5 sentences
+            words = sentence.strip().split()
+            if len(words) > 3:
+                relationships.append({
+                    "subject": words[0],
+                    "predicate": words[1] if len(words) > 1 else "relates_to",
+                    "object": words[-1]
+                })
+        
+        return relationships
+    
     async def _execute_steps_with_dependencies(self, steps: List[Dict[str, Any]], 
                                              content: Any, doc_uri: str, 
                                              document_result: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -233,7 +463,7 @@ class ExecutionAgentV2:
             # Execute steps
             for step in executable_steps:
                 try:
-                    result = await self._execute_single_step(step, content, doc_uri, document_result)
+                    result = await self._execute_single_step(step, content)
                     step_results[step['task_id']] = result
                     execution_results.append(result)
                     del remaining_steps[step['task_id']]
@@ -252,254 +482,6 @@ class ExecutionAgentV2:
                     del remaining_steps[step['task_id']]
         
         return execution_results
-    
-    async def _execute_single_step(self, step: Dict[str, Any], content: Any, 
-                                 doc_uri: str, document_result: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute a single ingestion step."""
-        task_id = step['task_id']
-        tool = step['tool']
-        
-        self.logger.info(f"Executing step {task_id} with tool {tool}")
-        
-        start_time = datetime.now()
-        
-        try:
-            if tool == 'vector_ingestion':
-                result = await self._execute_vector_ingestion(content, doc_uri, document_result)
-            elif tool == 'graph_ingestion':
-                result = await self._execute_graph_ingestion(content, doc_uri, document_result)
-            else:
-                raise ValueError(f"Unknown tool: {tool}")
-            
-            end_time = datetime.now()
-            execution_time = (end_time - start_time).total_seconds()
-            
-            return {
-                'task_id': task_id,
-                'tool': tool,
-                'status': result.get('status', 'unknown'),
-                'records_processed': result.get('records_processed', 0),
-                'execution_time_seconds': execution_time,
-                'execution_timestamp': end_time.isoformat(),
-                'tool_result': result
-            }
-            
-        except Exception as e:
-            end_time = datetime.now()
-            execution_time = (end_time - start_time).total_seconds()
-            
-            return {
-                'task_id': task_id,
-                'tool': tool,
-                'status': 'failed',
-                'error': str(e),
-                'execution_time_seconds': execution_time,
-                'execution_timestamp': end_time.isoformat()
-            }
-    
-    async def _execute_vector_ingestion(self, content: Any, doc_uri: str, 
-                                      document_result: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute vector ingestion."""
-        try:
-            if 'vector_ingestion' not in self.tools:
-                # Fallback simulation
-                self.logger.warning("Vector ingestion tool not available, using simulation")
-                await asyncio.sleep(0.5)
-                content_str = str(content)
-                return {
-                    'status': 'success',
-                    'records_processed': len(content_str.split('\n')),
-                    'method': 'simulation'
-                }
-            
-            # Prepare metadata
-            metadata = {
-                'doc_uri': doc_uri,
-                'source': document_result.get('source', 'unknown'),
-                'classification': document_result.get('classification'),
-                'document_type': document_result.get('document_type'),
-                'ingestion_timestamp': datetime.now().isoformat()
-            }
-            
-            # Execute with actual tool
-            vector_tool = self.tools['vector_ingestion']
-            result = await vector_tool.ingest(content, metadata)
-            
-            self.logger.info(f"Vector ingestion completed for {doc_uri}: {result.get('status')}")
-            return result
-            
-        except Exception as e:
-            self.logger.error(f"Vector ingestion failed for {doc_uri}: {e}")
-            return {
-                'status': 'failed',
-                'error': str(e),
-                'records_processed': 0
-            }
-    
-    async def _execute_graph_ingestion(self, content: Any, doc_uri: str, 
-                                     document_result: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute graph ingestion."""
-        try:
-            if 'graph_ingestion' not in self.tools:
-                # Fallback simulation
-                self.logger.warning("Graph ingestion tool not available, using simulation")
-                await asyncio.sleep(1.0)
-                content_str = str(content)
-                return {
-                    'status': 'success',
-                    'records_processed': max(1, len(content_str.split('.')) // 2),
-                    'method': 'simulation'
-                }
-            
-            # Try to parse as JSON if possible
-            if isinstance(content, str):
-                try:
-                    content_data = json.loads(content)
-                except json.JSONDecodeError:
-                    content_data = content
-            else:
-                content_data = content
-            
-            # Prepare metadata
-            metadata = {
-                'doc_uri': doc_uri,
-                'source': document_result.get('source', 'unknown'),
-                'classification': document_result.get('classification'),
-                'document_type': document_result.get('document_type'),
-                'node_type': 'Document',
-                'ingestion_timestamp': datetime.now().isoformat()
-            }
-            
-            # Execute with actual tool
-            graph_tool = self.tools['graph_ingestion']
-            result = await graph_tool.ingest(content_data, metadata)
-            
-            self.logger.info(f"Graph ingestion completed for {doc_uri}: {result.get('status')}")
-            return result
-            
-        except Exception as e:
-            self.logger.error(f"Graph ingestion failed for {doc_uri}: {e}")
-            return {
-                'status': 'failed',
-                'error': str(e),
-                'records_processed': 0
-            }
-    
-    async def _fetch_content(self, doc_uri: str, source: str) -> Optional[Any]:
-        """Fetch content from the appropriate connector using URI resolver."""
-        try:
-            # Use URI resolver if available for enhanced content access
-            if self.uri_resolver:
-                self.logger.info(f"🔍 Using URI resolver for: {doc_uri}")
-                result = self.uri_resolver.resolve_uri_to_content(doc_uri)
-                
-                if result['status'] == 'success':
-                    content_text = result['content_text']
-                    if content_text:
-                        self.logger.info(f"✅ Content resolved: {len(content_text)} characters")
-                        return content_text
-                    else:
-                        self.logger.warning(f"⚠️ No text content available for: {doc_uri}")
-                        return None
-                else:
-                    self.logger.error(f"❌ URI resolution failed: {result['error']}")
-                    # Fall back to original method
-                    return await self._fetch_content_fallback(doc_uri, source)
-            else:
-                # Fall back to original method
-                return await self._fetch_content_fallback(doc_uri, source)
-                
-        except Exception as e:
-            self.logger.error(f"Error fetching content from {doc_uri}: {e}")
-            return None
-    
-    async def _fetch_content_fallback(self, doc_uri: str, source: str) -> Optional[Any]:
-        """Fallback content fetching method using original connectors."""
-        try:
-            if source == 'azure' and 'azure' in self.connectors:
-                return await self._fetch_from_azure(doc_uri)
-            elif source == 'box' and 'box' in self.connectors:
-                return await self._fetch_from_box(doc_uri)
-            elif source == 'confluence' and 'confluence' in self.connectors:
-                return await self._fetch_from_confluence(doc_uri)
-            else:
-                self.logger.error(f"No connector available for source: {source}")
-                return None
-                
-        except Exception as e:
-            self.logger.error(f"Error in fallback content fetching from {doc_uri}: {e}")
-            return None
-    
-    async def _fetch_from_azure(self, doc_uri: str) -> Optional[bytes]:
-        """Fetch content from Azure Blob Storage."""
-        try:
-            # Parse Azure URI: azure://container/blob_name
-            if "://" in doc_uri:
-                path_parts = doc_uri.split("://")[1].split("/")
-                if len(path_parts) >= 2:
-                    container_name = path_parts[0]
-                    blob_name = "/".join(path_parts[1:])
-                    
-                    azure_client = self.connectors['azure']
-                    content = azure_client.download_blob_to_memory(container_name, blob_name)
-                    return content
-            
-            return None
-            
-        except Exception as e:
-            self.logger.error(f"Error fetching from Azure: {e}")
-            return None
-    
-    async def _fetch_from_box(self, doc_uri: str) -> Optional[bytes]:
-        """Fetch content from Box."""
-        try:
-            # Parse Box URI: box://file/FILE_ID
-            if "file/" in doc_uri:
-                file_id = doc_uri.split("file/")[1].split("?")[0]
-                
-                box_client = self.connectors['box']
-                if not box_client.is_authenticated():
-                    raise Exception("Box authentication failed")
-                
-                # Get files from documents-ingest folder
-                files = box_client.get_files_from_folder("documents-ingest")
-                
-                # Find the file by ID
-                target_file = None
-                for file_info in files:
-                    if file_info.get("id") == file_id:
-                        target_file = file_info
-                        break
-                
-                if not target_file:
-                    raise Exception(f"File {file_id} not found in documents-ingest folder")
-                
-                # Download file content to memory
-                content = box_client.download_file_to_memory(file_id)
-                return content
-            
-            return None
-            
-        except Exception as e:
-            self.logger.error(f"Error fetching from Box: {e}")
-            return None
-    
-    async def _fetch_from_confluence(self, doc_uri: str) -> Optional[str]:
-        """Fetch content from Confluence."""
-        try:
-            # Parse Confluence URI: confluence://page/PAGE_NAME
-            if "page/" in doc_uri:
-                page_name = doc_uri.split("page/")[1]
-                
-                confluence_client = self.connectors['confluence']
-                content = await confluence_client.download_page_content(page_name)
-                return content
-            
-            return None
-            
-        except Exception as e:
-            self.logger.error(f"Error fetching from Confluence: {e}")
-            return None
     
     def save_execution_results(self, results: List[Dict[str, Any]], 
                              output_file: str = "execution_results.json") -> bool:

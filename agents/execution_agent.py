@@ -21,20 +21,18 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 # Import ingestion tools
 try:
-    sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'agent-ingestion'))
-    from tools.vector_tool import VectorIngestionTool
-    from tools.graph_tool import GraphIngestionTool
+    # Import using tool registry only
+    from agents.tools.tool_registry import get_tool_registry
     TOOLS_AVAILABLE = True
 except ImportError as e:
     logging.warning(f"Agent ingestion tools import failed: {e}")
-    VectorIngestionTool = None
-    GraphIngestionTool = None
+    get_tool_registry = None
     TOOLS_AVAILABLE = False
 
 
-class ExecutionAgentV2:
+class ExecutionAgent:
     """
-    Execution Agent V2 for processing planner agent results with simplified JSON structure.
+    Execution Agent for processing planner agent results with simplified JSON structure.
     """
     
     def __init__(self):
@@ -45,48 +43,22 @@ class ExecutionAgentV2:
         # Note: Connectors and URI resolver removed - content comes from plan steps
     
     def _initialize_tools(self) -> Dict[str, Any]:
-        """Initialize ingestion tools."""
+        """Initialize ingestion tools using the tool registry."""
         tools = {}
         
-        self.logger.info(f"TOOLS_AVAILABLE: {TOOLS_AVAILABLE}")
-        self.logger.info(f"VectorIngestionTool: {VectorIngestionTool is not None}")
-        self.logger.info(f"GraphIngestionTool: {GraphIngestionTool is not None}")
+        if TOOLS_AVAILABLE and get_tool_registry:
+            try:
+                # Use tool registry for centralized tool management
+                registry = get_tool_registry()
+                tools = registry.get_all_tools()
+                self.logger.info(f"Tools initialized via registry: {list(tools.keys())}")
+                
+            except Exception as e:
+                self.logger.error(f"Failed to initialize tools via registry: {e}")
+                raise e
+        else:
+            raise RuntimeError("Tool registry not available")
         
-        # Try to initialize vector tool
-        try:
-            if TOOLS_AVAILABLE and VectorIngestionTool:
-                self.logger.info("Initializing VectorIngestionTool...")
-                tools['vector_ingestion'] = VectorIngestionTool()  # No config parameter needed
-                self.logger.info("✅ VectorIngestionTool initialized successfully")
-            else:
-                self.logger.warning("❌ VectorIngestionTool dependencies not available")
-                if not TOOLS_AVAILABLE:
-                    self.logger.warning("  - Tools import failed")
-                if not VectorIngestionTool:
-                    self.logger.warning("  - VectorIngestionTool class not available")
-        except Exception as e:
-            self.logger.error(f"❌ Failed to initialize vector tool: {e}")
-            import traceback
-            self.logger.error(f"Traceback: {traceback.format_exc()}")
-        
-        # Try to initialize graph tool
-        try:
-            if TOOLS_AVAILABLE and GraphIngestionTool:
-                self.logger.info("Initializing GraphIngestionTool...")
-                tools['graph_ingestion'] = GraphIngestionTool()  # No config parameter needed
-                self.logger.info("✅ GraphIngestionTool initialized successfully")
-            else:
-                self.logger.warning("❌ GraphIngestionTool dependencies not available")
-                if not TOOLS_AVAILABLE:
-                    self.logger.warning("  - Tools import failed")
-                if not GraphIngestionTool:
-                    self.logger.warning("  - GraphIngestionTool class not available")
-        except Exception as e:
-            self.logger.error(f"❌ Failed to initialize graph tool: {e}")
-            import traceback
-            self.logger.error(f"Traceback: {traceback.format_exc()}")
-        
-        self.logger.info(f"📋 Tools initialized: {list(tools.keys())}")
         return tools
     
     async def execute_planner_results(self, results_file: str) -> List[Dict[str, Any]]:
@@ -320,125 +292,40 @@ class ExecutionAgentV2:
     
     async def _execute_vector_ingestion_with_content(self, doc_uri: str, content: str, args: Dict[str, Any]) -> Dict[str, Any]:
         """Execute vector ingestion with document content using actual vector tool."""
-        try:
-            # Use actual vector ingestion tool if available
-            if 'vector_ingestion' in self.tools:
-                # Prepare metadata for vector ingestion
-                metadata = {
-                    'doc_uri': doc_uri,
-                    'source': args.get('source', 'unknown'),
-                    'document_type': args.get('document_type', 'unknown'),
-                    'ingestion_timestamp': datetime.now().isoformat()
-                }
-                
-                vector_tool = self.tools['vector_ingestion']
-                result = await vector_tool.ingest(content, metadata)
-                self.logger.info(f"Vector ingestion completed using actual tool for {doc_uri}")
-                return result
-            else:
-                # Fallback simulation if tool not available
-                self.logger.warning("Vector ingestion tool not available, using simulation")
-                await asyncio.sleep(1)  # Simulate processing time
-                
-                chunks = self._chunk_content(content)
-                
-                return {
-                    "operation": "vector_ingestion",
-                    "doc_uri": doc_uri,
-                    "chunks_created": len(chunks),
-                    "content_length": len(content),
-                    "embedding_model": "text-embedding-ada-002",
-                    "vector_store": "chroma",
-                    "message": f"Successfully ingested {len(chunks)} chunks into vector store (simulated)",
-                    "method": "simulation"
-                }
-        except Exception as e:
-            self.logger.error(f"Vector ingestion failed for {doc_uri}: {e}")
-            return {
-                "operation": "vector_ingestion",
-                "doc_uri": doc_uri,
-                "status": "failed",
-                "error": str(e),
-                "content_length": len(content)
-            }
+        # Prepare metadata for vector ingestion
+        metadata = {
+            'doc_uri': doc_uri,
+            'source': args.get('source', 'unknown'),
+            'document_type': args.get('document_type', 'unknown'),
+            'ingestion_timestamp': datetime.now().isoformat()
+        }
+        
+        vector_tool = self.tools['vector_ingestion']
+        result = await vector_tool.ingest(content, metadata)
+        self.logger.info(f"Vector ingestion completed for {doc_uri}")
+        return result
     
     async def _execute_graph_ingestion_with_content(self, doc_uri: str, content: str, args: Dict[str, Any]) -> Dict[str, Any]:
         """Execute graph ingestion with document content using actual graph tool."""
-        try:
-            # Use actual graph ingestion tool if available
-            if 'graph_ingestion' in self.tools:
-                # Prepare metadata for graph ingestion
-                metadata = {
-                    'doc_uri': doc_uri,
-                    'source': args.get('source', 'unknown'),
-                    'document_type': args.get('document_type', 'unknown'),
-                    'node_type': 'Document',
-                    'ingestion_timestamp': datetime.now().isoformat()
-                }
-                
-                graph_tool = self.tools['graph_ingestion']
-                result = await graph_tool.ingest(content, metadata)
-                self.logger.info(f"Graph ingestion completed using actual tool for {doc_uri}")
-                return result
-            else:
-                # Fallback simulation if tool not available
-                self.logger.warning("Graph ingestion tool not available, using simulation")
-                await asyncio.sleep(1.5)  # Simulate processing time
-                
-                entities = self._extract_entities_simple(content)
-                relationships = self._extract_relationships_simple(content)
-                
-                return {
-                    "operation": "graph_ingestion",
-                    "doc_uri": doc_uri,
-                    "entities_extracted": len(entities),
-                    "relationships_extracted": len(relationships),
-                    "content_length": len(content),
-                    "graph_database": "neo4j",
-                    "message": f"Successfully created {len(entities)} entities and {len(relationships)} relationships (simulated)",
-                    "method": "simulation"
-                }
-        except Exception as e:
-            self.logger.error(f"Graph ingestion failed for {doc_uri}: {e}")
-            return {
-                "operation": "graph_ingestion",
-                "doc_uri": doc_uri,
-                "status": "failed",
-                "error": str(e),
-                "content_length": len(content)
-            }
-    
-    def _chunk_content(self, content: str, chunk_size: int = 1000) -> List[str]:
-        """Split content into chunks for vector processing."""
-        chunks = []
-        for i in range(0, len(content), chunk_size):
-            chunk = content[i:i + chunk_size]
-            if chunk.strip():
-                chunks.append(chunk.strip())
-        return chunks
-    
-    def _extract_entities_simple(self, content: str) -> List[str]:
-        """Extract entities from content (simplified example)."""
-        words = content.split()
-        # Simple heuristic: words starting with capital letters
-        entities = [word for word in words if word[0].isupper() and len(word) > 2]
-        return list(set(entities))[:10]  # Return first 10 unique entities
-    
-    def _extract_relationships_simple(self, content: str) -> List[Dict[str, str]]:
-        """Extract relationships from content (simplified example)."""
-        sentences = content.split('.')
-        relationships = []
+        # Prepare metadata for graph ingestion
+        metadata = {
+            'doc_uri': doc_uri,
+            'source': args.get('source', 'unknown'),
+            'document_type': args.get('document_type', 'unknown'),
+            'node_type': 'Document',
+            'ingestion_timestamp': datetime.now().isoformat()
+        }
         
-        for sentence in sentences[:5]:  # Process first 5 sentences
-            words = sentence.strip().split()
-            if len(words) > 3:
-                relationships.append({
-                    "subject": words[0],
-                    "predicate": words[1] if len(words) > 1 else "relates_to",
-                    "object": words[-1]
-                })
-        
-        return relationships
+        graph_tool = self.tools['graph_ingestion']
+        # Use the correct method name and make it synchronous call
+        result = graph_tool.ingest_content(
+            content=content,
+            source_name=doc_uri,
+            content_type=args.get('document_type', 'text'),
+            metadata=metadata
+        )
+        self.logger.info(f"Graph ingestion completed for {doc_uri}")
+        return result
     
     async def _execute_steps_with_dependencies(self, steps: List[Dict[str, Any]], 
                                              content: Any, doc_uri: str, 
@@ -507,7 +394,7 @@ async def main():
     logging.basicConfig(level=logging.INFO)
     
     # Initialize the execution agent
-    executor = ExecutionAgentV2()
+    executor = ExecutionAgent()
     
     # Execute planner results
     results_file = "planner_agent_results_20250909_143524.json"

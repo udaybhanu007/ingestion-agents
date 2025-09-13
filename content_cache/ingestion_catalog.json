@@ -1,0 +1,100 @@
+{
+  "test://deduplication/sample-doc.md": {
+    "document_uri": "test://deduplication/sample-doc.md",
+    "content_hash": "29ddb54f9347b2f60d7d5219e473399f5a7fad7877e2265d4bbc79891fc5875d",
+    "ingestion_status": "completed",
+    "last_updated": "2025-09-13T15:16:42.196027",
+    "metadata": {
+      "doc_uri": "test://deduplication/sample-doc.md",
+      "document_type": "markdown",
+      "source": "deduplication_test",
+      "author": "System"
+    },
+    "chunk_count": 1,
+    "embedding_count": 1
+  },
+  "test://medical_report.md": {
+    "document_uri": "test://medical_report.md",
+    "content_hash": "5af9e91838ff52ed880efc0adb14e3fb356d6b0e911b6dff902eceadfbd44b46",
+    "ingestion_status": "completed",
+    "last_updated": "2025-09-13T18:07:33.155388",
+    "metadata": {
+      "doc_uri": "test://medical_report.md",
+      "source": "unknown",
+      "document_type": "unknown",
+      "ingestion_timestamp": "2025-09-13T18:07:32.212019"
+    },
+    "chunk_count": 1,
+    "embedding_count": 1
+  },
+  "test://sample-doc.txt": {
+    "document_uri": "test://sample-doc.txt",
+    "content_hash": "84943e92807bdc69d75ec97e55ad0b74e20380570226adc33a061c584f0ab457",
+    "ingestion_status": "completed",
+    "last_updated": "2025-09-13T18:16:43.414843",
+    "metadata": {
+      "doc_uri": "test://sample-doc.txt",
+      "source": "unknown",
+      "document_type": "unknown",
+      "ingestion_timestamp": "2025-09-13T18:16:42.479198"
+    },
+    "chunk_count": 1,
+    "embedding_count": 1
+  },
+  "test://medical-document.txt": {
+    "document_uri": "test://medical-document.txt",
+    "content_hash": "793636d0a4d2eb38f0f3c85e5ea59ec16b528ecef40d9899f76c968e07969c56",
+    "ingestion_status": "completed",
+    "last_updated": "2025-09-13T18:17:05.715070",
+    "metadata": {
+      "doc_uri": "test://medical-document.txt",
+      "source": "unknown",
+      "document_type": "unknown",
+      "ingestion_timestamp": "2025-09-13T18:17:04.761861"
+    },
+    "chunk_count": 1,
+    "embedding_count": 1
+  },
+  "test://structured-medical-report.txt": {
+    "document_uri": "test://structured-medical-report.txt",
+    "content_hash": "cdcae7b6285da6f8bd888d15afd457c5e93b94d9f36f6387cf35650760965708",
+    "ingestion_status": "completed",
+    "last_updated": "2025-09-13T18:17:49.911529",
+    "metadata": {
+      "doc_uri": "test://structured-medical-report.txt",
+      "source": "unknown",
+      "document_type": "unknown",
+      "ingestion_timestamp": "2025-09-13T18:17:48.935300"
+    },
+    "chunk_count": 1,
+    "embedding_count": 1
+  },
+  "file://C:/Users/kulbir/Desktop/Project/GenAI/Agent-Ingestion/ingestion-agents/downloaded_content/Chest_X-Ray_Medical_Document.md": {
+    "document_uri": "file://C:/Users/kulbir/Desktop/Project/GenAI/Agent-Ingestion/ingestion-agents/downloaded_content/Chest_X-Ray_Medical_Document.md",
+    "content_hash": "5d1104ee93a2662e7003a10dfda644322c60f7bec7b3b01712eff2bc2e5f6328",
+    "ingestion_status": "completed",
+    "last_updated": "2025-09-13T18:20:55.071698",
+    "metadata": {
+      "doc_uri": "file://C:/Users/kulbir/Desktop/Project/GenAI/Agent-Ingestion/ingestion-agents/downloaded_content/Chest_X-Ray_Medical_Document.md",
+      "source": "unknown",
+      "document_type": "unknown",
+      "ingestion_timestamp": "2025-09-13T18:20:54.832675"
+    },
+    "chunk_count": 1,
+    "embedding_count": 1
+  },
+  "test://simple-text.txt": {
+    "document_uri": "test://simple-text.txt",
+    "content_hash": "9b12fd00dd04aa108a73af8a7f4330533eb6532623a4a90e51f297d60dfe59fe",
+    "ingestion_status": "completed",
+    "last_updated": "2025-09-13T18:20:53.442732",
+    "metadata": {
+      "doc_uri": "test://simple-text.txt",
+      "source": "unknown",
+      "document_type": "unknown",
+      "ingestion_timestamp": "2025-09-13T18:20:52.403295"
+    },
+    "chunk_count": 1,
+    "embedding_count": 1
+  }
+}

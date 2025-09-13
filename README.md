@@ -9,7 +9,8 @@ This system implements an API-driven ingestion architecture with the following c
 ### Core Components
 
 - **Planner Agent** (`agents/planner-agent.py`): Analyzes documents and creates intelligent ingestion plans
-- **Execution Agent** (`agents/execution-agent.py`): Executes plans with content deduplication via SHA256 hashing
+- **Execution Agent** (`agents/execution_agent.py`): Enhanced execution with registry-based tool management
+- **Vector Tool** (`agents/tools/vector_tool.py`): Advanced chunking and content deduplication via SHA256 hashing
 - **Connectors** (`connector/`): Integration with Box, Confluence, and Azure Blob Storage
 - **API Layer** (`api/ingestion_api.py`): RESTful endpoints for async ingestion workflows
 
@@ -17,7 +18,7 @@ This system implements an API-driven ingestion architecture with the following c
 
 - ✅ **Async & Idempotent**: `/ingest` API processes documents asynchronously 
 - ✅ **Intelligent Planning**: Document classification determines optimal ingestion strategy
-- ✅ **Content Deduplication**: SHA256 hashing prevents re-processing unchanged content
+- ✅ **Content Deduplication**: SHA256 hashing in vector tool prevents re-processing unchanged content
 - ✅ **Tool Integration**: Supports both vector and graph ingestion workflows
 - ✅ **Dependency Management**: Respects step dependencies in execution plans
 
@@ -148,10 +149,11 @@ The system prevents unnecessary re-processing through content hashing:
 ```
 ingestion-agents/
 ├── agents/
-│   ├── planner-agent.py      # Planning & classification logic
-│   ├── execution-agent.py    # Execution with deduplication
+│   ├── planner-agent.py       # Planning & classification logic
+│   ├── execution_agent.py      # Enhanced execution with registry-based tools
 │   └── tools/
-│       └── vector_tool.py    # Vector database operations
+│       ├── vector_tool.py             # Enhanced vector ingestion with deduplication
+│       └── tool_registry.py          # Centralized tool management
 ├── connector/
 │   ├── box.py               # Box cloud storage connector
 │   ├── azure.py             # Azure services connector

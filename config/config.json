@@ -31,16 +31,23 @@
   },
   "tools": {
     "vector_database": {
-      "type": "chroma",
+      "type": "qdrant",
       "host": "localhost",
-      "port": 8001,
-      "embedding_dimension": 384
+      "port": 6333,
+      "collection_name": "ingestion_documents",
+      "embedding_dimension": 1536,
+      "embedding_model": "text-embedding-ada-002",
+      "chunk_size": 1000,
+      "chunk_overlap": 200,
+      "distance_metric": "cosine"
     },
     "graph_database": {
       "type": "neo4j",
       "uri": "bolt://localhost:7687",
       "username": "neo4j",
-      "password": "${NEO4J_PASSWORD}"
+      "password": "${NEO4J_PASSWORD}",
+      "mcp_cypher_url": "http://127.0.0.1:8003/mcp/",
+      "mcp_data_modeling_url": "http://127.0.0.1:8004/mcp/"
     }
   },
   "logging": {

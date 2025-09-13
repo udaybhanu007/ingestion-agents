@@ -18,7 +18,7 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 # Import agents and connectors
 from agents.planner_agent import PlannerAgent
-from agents.execution_agent_v2 import ExecutionAgentV2
+from agents.execution_agent import ExecutionAgent
 
 app = FastAPI(title="Ingestion Agent API", version="1.0.0")
 
@@ -42,11 +42,11 @@ def get_planner() -> PlannerAgent:
         planner = PlannerAgent()
     return planner
 
-def get_execution_agent() -> ExecutionAgentV2:
+def get_execution_agent() -> ExecutionAgent:
     """Get or create execution agent instance (singleton pattern)"""
     global execution_agent
     if execution_agent is None:
-        execution_agent = ExecutionAgentV2()
+        execution_agent = ExecutionAgent()
     return execution_agent
 
 # Request/Response models
@@ -172,52 +172,4 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    
-    # For debugging via Swagger UI, uncomment the line below:
-    #uvicorn.run(app, host="127.0.0.1", port=8081, reload=True, log_level="debug")
-    
-    # For direct function debugging, comment out uvicorn.run above and use below:
-    # print("🔧 API module loaded for debugging")
-    # print("📋 Available endpoints:")
-    # print("  - POST /ingest: Create and execute ingestion plan")
-    # print("  - GET /status/{run_id}: Get ingestion run status")
-    # print("  - GET /health: Health check")
-    # print("\n💡 To run the server, uncomment the uvicorn.run() line above")
-    # print("💡 To debug API functions directly, add your test calls below this line")
-    
-    # Example: Test the API functions directly
-    import asyncio
-    
-    async def test_direct_call():
-        """Test the ingestion API function directly for debugging."""
-        print("\n🧪 Testing direct API call...")
-        try:
-            request = IngestRequest(
-                doc_uri="box://file/1969320109971",
-                document_source="box",
-                document_type="text",
-                content_type="text/plain"
-            )
-            
-            print(f"📄 Testing with: {request.doc_uri}")
-            result = await ingest_document(request)
-            
-            print(f"✅ Success! Run ID: {result.run_id}")
-            print(f"📋 Plan ID: {result.plan_id}")
-            print(f"🔄 Execution Results: {len(result.execution_results or [])} steps executed")
-            
-            # Print execution results summary
-            if result.execution_results:
-                for i, exec_result in enumerate(result.execution_results, 1):
-                    status = exec_result.get('status', 'unknown')
-                    tool = exec_result.get('tool', 'unknown')
-                    print(f"   Step {i}: {tool} - {status}")
-            
-            return result
-            
-        except Exception as e:
-            print(f"❌ Error during direct call: {e}")
-            return None
-    
-    # Uncomment the line below to run the direct test
-    asyncio.run(test_direct_call())
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)

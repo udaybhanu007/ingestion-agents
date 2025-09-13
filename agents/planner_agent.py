@@ -14,6 +14,7 @@ import os
 import sys
 from typing import Dict, List, Any, Optional
 from datetime import datetime
+from pathlib import Path
 
 # Add the parent directory to the path to import local modules
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -125,6 +126,12 @@ class PlannerAgent:
             return "box"
         elif doc_uri.startswith("confluence://"):
             return "confluence"
+        elif doc_uri.startswith("test://"):
+            return "test"
+        elif doc_uri.startswith("local://"):
+            return "local"
+        elif doc_uri.startswith("file://"):
+            return "file"
         else:
             # Default fallback or determine from other patterns
             if "blob.core.windows.net" in doc_uri:
@@ -139,6 +146,10 @@ class PlannerAgent:
     async def _get_connector(self, doc_uri: str):
         """Get or initialize connector based on document URI (lazy loading)."""
         connector_type = self._get_connector_type_from_uri(doc_uri)
+        
+        # Handle test and local URIs with mock content
+        if connector_type in ["test", "local", "file"]:
+            return self._create_mock_connector(connector_type, doc_uri)
         
         # Return existing connector if already initialized
         if connector_type in self._connectors and self._connectors[connector_type] is not None:
@@ -174,6 +185,33 @@ class PlannerAgent:
             self._connectors[connector_type] = None
         
         return None
+
+    def _create_mock_connector(self, connector_type: str, doc_uri: str):
+        """Create a mock connector for testing purposes."""
+        class MockConnector:
+            def __init__(self, connector_type, doc_uri):
+                self.connector_type = connector_type
+                self.doc_uri = doc_uri
+            
+            async def get_document_content(self, uri):
+                """Return mock content for testing."""
+                return {
+                    "content": f"Mock content for {self.connector_type} connector testing.\n"
+                             f"URI: {uri}\n"
+                             f"This is sample content used for testing the ingestion pipeline.\n"
+                             f"It includes multiple sentences for proper chunking and processing.\n"
+                             f"Created at: {datetime.now().isoformat()}",
+                    "metadata": {
+                        "connector_type": self.connector_type,
+                        "doc_uri": uri,
+                        "content_type": "text/plain",
+                        "size": 250,
+                        "is_mock": True,
+                        "created_at": datetime.now().isoformat()
+                    }
+                }
+        
+        return MockConnector(connector_type, doc_uri)
 
     async def create_ingestion_plan_async(self, doc_uri: str, metadata: Optional[Dict[str, Any]] = None, 
                                         content: Optional[str] = None) -> Dict[str, Any]:
@@ -226,6 +264,13 @@ class PlannerAgent:
         """Fetch content from connector asynchronously."""
         try:
             connector_type = self._get_connector_type_from_uri(doc_uri)
+            
+            # Handle mock connectors for testing
+            if hasattr(connector, 'get_document_content'):
+                result = await connector.get_document_content(doc_uri)
+                if isinstance(result, dict) and 'content' in result:
+                    return result['content']
+                return str(result) if result else None
             
             if connector_type == "azure":
                 # Parse Azure URI: azure://container/blob_name
@@ -296,6 +341,84 @@ class PlannerAgent:
             self.logger.error(f"Failed to load guidelines: {e}")
             return ""
     
+    def _log_classification_details(self, classification_result: Dict[str, Any], doc_uri: str) -> None:
+        """
+        Log detailed classification information to console only.
+        
+        Args:
+            classification_result: Result from classify_document_with_llm()
+            doc_uri: Document URI
+        """
+        # Log to console with detailed formatting
+        self.logger.info("=" * 80)
+        self.logger.info("DOCUMENT CLASSIFICATION COMPLETE")
+        self.logger.info("=" * 80)
+        self.logger.info(f"Document URI: {doc_uri}")
+        self.logger.info(f"Classification: {classification_result['classification']}")
+        self.logger.info(f"Document Type: {classification_result['document_type']}")
+        self.logger.info(f"Reasoning: {classification_result['reasoning']}")
+        if classification_result.get('key_indicators'):
+            self.logger.info(f"Key Indicators: {', '.join(classification_result['key_indicators'])}")
+        self.logger.info("=" * 80)
+    
+    def _log_ingestion_plan(self, plan: Dict[str, Any], doc_uri: str) -> None:
+        """
+        Log ingestion plan details to console only.
+        
+        Args:
+            plan: Generated ingestion plan
+            doc_uri: Document URI
+        """
+        plan_id = plan.get('plan_id', 'unknown')
+        
+        self.logger.info("=" * 60)
+        self.logger.info("INGESTION PLAN GENERATED")
+        self.logger.info("=" * 60)
+        self.logger.info(f"Plan ID: {plan_id}")
+        self.logger.info(f"Document URI: {doc_uri}")
+        self.logger.info(f"Number of Steps: {len(plan.get('steps', []))}")
+        
+        # Log each step
+        for i, step in enumerate(plan.get('steps', []), 1):
+            self.logger.info(f"Step {i}: {step.get('tool', 'unknown')} (ID: {step.get('task_id', 'unknown')})")
+            if step.get('depends_on'):
+                self.logger.info(f"  Depends on: {', '.join(step['depends_on'])}")
+        
+        self.logger.info("=" * 60)
+    
+    def save_plan_to_json(self, plan: Dict[str, Any], filename: Optional[str] = None) -> bool:
+        """
+        Explicitly save an ingestion plan to a JSON file.
+        
+        Args:
+            plan: Generated ingestion plan
+            filename: Optional filename. If not provided, generates one with timestamp and plan ID
+            
+        Returns:
+            bool: True if saved successfully, False otherwise
+        """
+        try:
+            if filename is None:
+                # Generate filename with timestamp and plan ID
+                plan_id = plan.get('plan_id', 'unknown')
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"ingestion_plan_{timestamp}_{plan_id}.json"
+            
+            # Ensure .json extension
+            if not filename.endswith('.json'):
+                filename += '.json'
+            
+            if save_json(plan, filename):
+                self.logger.info(f"✅ Plan saved successfully to: {filename}")
+                return True
+            else:
+                self.logger.error(f"❌ Failed to save plan to: {filename}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"❌ Error saving plan to JSON: {e}")
+            return False
+    
     def get_available_connectors(self) -> List[str]:
         """Get list of available and initialized connectors."""
         return [name for name, connector in self._connectors.items() if connector is not None]
@@ -360,7 +483,9 @@ class PlannerAgent:
                 llm_result, doc_uri, structure_analysis, entities
             )
             
-            self.logger.info(f"Document {doc_uri} classified as {classification_result['classification']}")
+            # Log detailed classification information and save to file
+            self._log_classification_details(classification_result, doc_uri)
+            
             return classification_result
             
         except Exception as e:
@@ -490,7 +615,9 @@ Please respond with a JSON object containing:
             self.logger.error(f"Generated invalid plan for {doc_uri}")
             raise ValueError("Generated plan does not follow required schema")
         
-        self.logger.info(f"Generated ingestion plan {plan_id} for {doc_uri}")
+        # Log plan details to console
+        self._log_ingestion_plan(plan, doc_uri)
+        
         return plan
     
     async def retrieve_documents_from_azure(self, container_name: str, 

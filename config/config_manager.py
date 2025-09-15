@@ -46,14 +46,11 @@ class ConfigManager:
             if os.path.exists(env_path):
                 load_dotenv(env_path)
                 env_file_loaded = env_path
-                self.logger.info("Environment file loaded", 
-                               file_path=env_path, 
-                               component="config_manager")
+                self.logger.info(f"Environment file loaded: {env_path} [component=config_manager]")
                 break
         
         if not env_file_loaded:
-            self.logger.warning("No environment file found, using system environment", 
-                              component="config_manager")
+            self.logger.warning("No environment file found, using system environment [component=config_manager]")
         
         # Load all configuration sections
         self._load_azure_config()

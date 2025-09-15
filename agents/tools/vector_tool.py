@@ -555,12 +555,10 @@ class VectorTool:
         # Initialize deduplication catalog
         self.catalog = IngestionCatalog()
         
-        self.logger.info("VectorTool initialized",
-                        component="vector_tool",
-                        embedding_dimension=self.embedding_dimension,
-                        collection_name=self.collection_name,
-                        qdrant_available=self.qdrant_client is not None,
-                        openai_available=self.openai_client is not None)
+        # Log after all attributes are set
+        self.logger.info(f"VectorTool initialized [component=vector_tool, embedding_dimension={self.embedding_dimension}, collection_name={self.collection_name}, qdrant_available={self.qdrant_client is not None}, openai_available={self.openai_client is not None}]")
+        
+    # ...existing code...
     
     def _initialize_qdrant(self):
         """Initialize Qdrant client connection with SSL fix."""
@@ -671,10 +669,7 @@ class VectorTool:
         doc_uri = metadata.get("doc_uri", "unknown")
         
         try:
-            self.logger.info("Vector ingestion process started",
-                           doc_uri=doc_uri,
-                           operation="vector_ingestion",
-                           component="vector_tool")
+            self.logger.info(f"Vector ingestion process started [doc_uri={doc_uri}, operation=vector_ingestion, component=vector_tool]")
             
             # Convert content to string if needed
             if isinstance(content, dict):
@@ -687,16 +682,10 @@ class VectorTool:
             # DEDUPLICATION: Check if content has changed
             current_hash = ContentHasher.compute_normalized_hash(content_str)
             
-            self.logger.info("Content hash computed",
-                           doc_uri=doc_uri,
-                           content_hash=current_hash[:8],  # First 8 chars for logging
-                           content_length=len(content_str))
+            self.logger.info(f"Content hash computed [doc_uri={doc_uri}, content_hash={current_hash[:8]}, content_length={len(content_str)}]")
             
             if not self.catalog.has_content_changed(doc_uri, current_hash):
-                self.logger.info("Content unchanged, skipping ingestion",
-                               doc_uri=doc_uri,
-                               operation="deduplication_skip",
-                               content_hash=current_hash[:8])
+                self.logger.info(f"Content unchanged, skipping ingestion [doc_uri={doc_uri}, operation=deduplication_skip, content_hash={current_hash[:8]}]")
                 return {
                     "status": "skipped",
                     "operation": "vector_ingestion",
@@ -710,43 +699,26 @@ class VectorTool:
             self.catalog.update_entry(doc_uri, current_hash, IngestionStatus.PROCESSING)
             
             # Step 1: Chunk the content
-            self.logger.info("Starting content chunking",
-                           doc_uri=doc_uri,
-                           operation="chunking")
+            self.logger.info(f"Starting content chunking [doc_uri={doc_uri}, operation=chunking]")
             
             chunks = self._chunk_content(content_str, metadata)
             
-            self.logger.info("Content chunking completed",
-                           doc_uri=doc_uri,
-                           operation="chunking",
-                           chunks_count=len(chunks))
+            self.logger.info(f"Content chunking completed [doc_uri={doc_uri}, operation=chunking, chunks_count={len(chunks)}]")
             
             # Step 2: Generate embeddings for chunks
-            self.logger.info("Starting embedding generation",
-                           doc_uri=doc_uri,
-                           operation="embedding_generation",
-                           chunks_count=len(chunks))
+            self.logger.info(f"Starting embedding generation [doc_uri={doc_uri}, operation=embedding_generation, chunks_count={len(chunks)}]")
             
             documents = await self._generate_embeddings(chunks, metadata)
             
-            self.logger.info("Embedding generation completed",
-                           doc_uri=doc_uri,
-                           operation="embedding_generation",
-                           documents_count=len(documents))
+            self.logger.info(f"Embedding generation completed [doc_uri={doc_uri}, operation=embedding_generation, documents_count={len(documents)}]")
             
             # Step 3: Store in vector database
-            self.logger.info("Starting vector storage",
-                           doc_uri=doc_uri,
-                           operation="vector_storage",
-                           documents_count=len(documents))
+            self.logger.info(f"Starting vector storage [doc_uri={doc_uri}, operation=vector_storage, documents_count={len(documents)}]")
             
             storage_result = await self._store_vectors(documents)
             stored_count = storage_result.get('stored_count', 0)
             
-            self.logger.info("Vector storage completed",
-                           doc_uri=doc_uri,
-                           operation="vector_storage",
-                           stored_count=stored_count)
+            self.logger.info(f"Vector storage completed [doc_uri={doc_uri}, operation=vector_storage, stored_count={stored_count}]")
             
             # Update catalog with successful completion
             self.catalog.update_entry(
@@ -758,12 +730,7 @@ class VectorTool:
                 embedding_count=len(documents)
             )
             
-            self.logger.info("Vector ingestion process completed successfully",
-                           doc_uri=doc_uri,
-                           operation="vector_ingestion",
-                           chunks_count=len(chunks),
-                           stored_count=stored_count,
-                           content_hash=current_hash[:8])
+            self.logger.info(f"Vector ingestion process completed successfully [doc_uri={doc_uri}, operation=vector_ingestion, chunks_count={len(chunks)}, stored_count={stored_count}, content_hash={current_hash[:8]}]")
             
             return {
                 "status": "success",
@@ -781,12 +748,7 @@ class VectorTool:
             }
             
         except Exception as e:
-            self.logger.error("Vector ingestion failed",
-                            doc_uri=doc_uri,
-                            operation="vector_ingestion",
-                            error=str(e),
-                            error_type=type(e).__name__,
-                            component="vector_tool")
+            self.logger.error(f"Vector ingestion failed [doc_uri={doc_uri}, operation=vector_ingestion, error={str(e)}, error_type={type(e).__name__}, component=vector_tool]")
             
             # Update catalog with failure status
             if 'current_hash' in locals():

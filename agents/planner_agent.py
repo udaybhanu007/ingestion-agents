@@ -88,10 +88,7 @@ class PlannerAgent:
         # Load guidelines
         self.guidelines = self._load_guidelines()
         
-        self.logger.info("PlannerAgent initialized", 
-                        component="planner_agent",
-                        openai_available=OPENAI_AVAILABLE,
-                        structured_logging=STRUCTURED_LOGGING_AVAILABLE)
+        self.logger.info(f"PlannerAgent initialized [component=planner_agent, openai_available={OPENAI_AVAILABLE}, structured_logging={STRUCTURED_LOGGING_AVAILABLE}]")
     
     def _load_environment(self, env_file: str):
         """Load environment variables from file."""
@@ -102,14 +99,11 @@ class PlannerAgent:
             if os.path.exists(env_path):
                 load_dotenv(env_path)
                 env_file_loaded = env_path
-                self.logger.info("Environment file loaded", 
-                               file_path=env_path,
-                               component="planner_agent")
+                self.logger.info(f"Environment file loaded: {env_path} [component=planner_agent]")
                 break
         
         if not env_file_loaded:
-            self.logger.warning("No environment file found, using system environment",
-                              component="planner_agent")
+            self.logger.warning("No environment file found, using system environment [component=planner_agent]")
     
     def _initialize_llm(self):
         """Initialize Azure OpenAI client."""
@@ -341,10 +335,7 @@ class PlannerAgent:
                     success=True
                 )
             
-            self.logger.info("Ingestion plan created successfully",
-                           doc_uri=doc_uri,
-                           execution_id=execution_id,
-                           plan_id=plan.get("plan_id"))
+            self.logger.info(f"Ingestion plan created successfully [doc_uri={doc_uri}, execution_id={execution_id}, plan_id={plan.get('plan_id')}]")
             return plan
             
         except Exception as e:

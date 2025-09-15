@@ -1,0 +1,16 @@
+{
+  "azure://rag-agents-container/ARXIV_V5_CHESTXRAY.pdf": {
+    "document_uri": "azure://rag-agents-container/ARXIV_V5_CHESTXRAY.pdf",
+    "content_hash": "7ba3e51f5bff1354ab7c9144bdb4bc48623a4b1fc1f3a7b752cb2757f726bf60",
+    "ingestion_status": "completed",
+    "last_updated": "2025-09-15T19:21:02.117638",
+    "metadata": {
+      "doc_uri": "azure://rag-agents-container/ARXIV_V5_CHESTXRAY.pdf",
+      "source": "unknown",
+      "document_type": "unknown",
+      "ingestion_timestamp": "2025-09-15T19:20:57.142282"
+    },
+    "chunk_count": 26,
+    "embedding_count": 26
+  }
+}

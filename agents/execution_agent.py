@@ -54,10 +54,7 @@ class ExecutionAgent:
             
         self.tools = self._initialize_tools()
         
-        self.logger.info("ExecutionAgent initialized",
-                        component="execution_agent",
-                        tools_available=TOOLS_AVAILABLE,
-                        structured_logging=STRUCTURED_LOGGING_AVAILABLE)
+        self.logger.info(f"ExecutionAgent initialized [component=execution_agent, tools_available={TOOLS_AVAILABLE}, structured_logging={STRUCTURED_LOGGING_AVAILABLE}]")
         
         # Note: Connectors and URI resolver removed - content comes from plan steps
     
@@ -232,10 +229,7 @@ class ExecutionAgent:
             steps = plan.get('steps', [])
             plan_id = plan.get('plan_id')
             
-            self.logger.info("Plan execution started",
-                           plan_id=plan_id,
-                           steps_count=len(steps),
-                           execution_id=execution_id)
+            self.logger.info(f"Plan execution started [plan_id={plan_id}, steps_count={len(steps)}, execution_id={execution_id}]")
             
             # REASONING: Analyze plan structure and extract content
             if STRUCTURED_LOGGING_AVAILABLE:
@@ -320,11 +314,7 @@ class ExecutionAgent:
                         error=step_result.get('error') if not step_success else None
                     )
                 
-                self.logger.info("Step execution completed",
-                               step_id=step_id,
-                               tool=step.get("tool"),
-                               status=step_result.get('status'),
-                               execution_id=execution_id)
+                self.logger.info(f"Step execution completed [step_id={step_id}, tool={step.get('tool')}, status={step_result.get('status')}, execution_id={execution_id}]")
             
             # OBSERVATION: Plan execution completed
             if STRUCTURED_LOGGING_AVAILABLE:
@@ -338,11 +328,7 @@ class ExecutionAgent:
                     success=True
                 )
             
-            self.logger.info("Plan execution completed",
-                           plan_id=plan_id,
-                           execution_id=execution_id,
-                           total_steps=len(steps),
-                           successful_steps=sum(1 for r in step_results if r.get('status') == 'completed'))
+            self.logger.info(f"Plan execution completed [plan_id={plan_id}, execution_id={execution_id}, total_steps={len(steps)}, successful_steps={sum(1 for r in step_results if r.get('status') == 'completed')}]")
             
             return step_results
             
@@ -358,11 +344,7 @@ class ExecutionAgent:
                     }
                 )
             
-            self.logger.error("Plan execution failed",
-                            plan_id=plan.get('plan_id'),
-                            error=str(e),
-                            error_type=type(e).__name__,
-                            execution_id=execution_id)
+            self.logger.error(f"Plan execution failed [plan_id={plan.get('plan_id')}, error={str(e)}, error_type={type(e).__name__}, execution_id={execution_id}]")
             
             return [{
                 'status': 'failed',

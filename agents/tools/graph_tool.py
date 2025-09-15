@@ -55,6 +55,13 @@ except ImportError:
     def get_graph_config():
         return MockConfig()
 
+# Import structured logging
+try:
+    from config.logger_config import get_tool_logger
+    STRUCTURED_LOGGING_AVAILABLE = True
+except ImportError:
+    STRUCTURED_LOGGING_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -63,7 +70,12 @@ class GraphIngestionTool:
     
     def __init__(self):
         self.config = get_graph_config()
-        self.logger = logging.getLogger(__name__)
+        
+        # Initialize structured logging
+        if STRUCTURED_LOGGING_AVAILABLE:
+            self.logger = get_tool_logger("graph_tool")
+        else:
+            self.logger = logging.getLogger(__name__)
         
         # Initialize Azure OpenAI client using correct config structure
         openai_config = self.config.get_config('openai')
@@ -77,6 +89,12 @@ class GraphIngestionTool:
         # MCP server configurations - using working dual server approach
         self.cypher_server_url = "http://127.0.0.1:8003/mcp/"
         self.data_modeling_server_url = "http://127.0.0.1:8004/mcp/" 
+        
+        self.logger.info("GraphIngestionTool initialized",
+                        component="graph_tool",
+                        cypher_server_url=self.cypher_server_url,
+                        data_modeling_server_url=self.data_modeling_server_url,
+                        openai_deployment=openai_config.get('deployment_name'))
         
         # Track processing state
         self.processing_stats = {

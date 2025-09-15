@@ -20,7 +20,21 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from agents.planner_agent import PlannerAgent
 from agents.execution_agent import ExecutionAgent
 
+# Import structured logging
+try:
+    from config.logger_config import get_api_logger, get_logger
+    STRUCTURED_LOGGING_AVAILABLE = True
+except ImportError:
+    STRUCTURED_LOGGING_AVAILABLE = False
+    import logging
+
 app = FastAPI(title="Ingestion Agent API", version="1.0.0")
+
+# Initialize API logger
+if STRUCTURED_LOGGING_AVAILABLE:
+    api_logger = get_api_logger("ingestion")
+else:
+    api_logger = logging.getLogger(__name__)
 
 # Add CORS middleware
 app.add_middleware(
@@ -87,14 +101,35 @@ async def ingest_document(request: IngestRequest):
     4. Executes the plan using execution agent
     5. Returns the plan and execution results
     """
+    # Generate unique run ID
+    run_id = str(uuid.uuid4())
+    
+    # Log API request
+    api_logger.info("Ingestion request received",
+                   run_id=run_id,
+                   doc_uri=request.doc_uri,
+                   document_source=request.document_source,
+                   document_type=request.document_type,
+                   endpoint="/ingest")
+    
     try:
-        # Generate unique run ID
-        run_id = str(uuid.uuid4())
+        # Initialize run tracking
+        active_runs[run_id] = {
+            "status": "planning",
+            "plan": {},
+            "errors": [],
+            "start_time": datetime.now().isoformat(),
+            "request": request.dict()
+        }
         
         # Get planner agent (lazy initialization)
         agent = get_planner()
         
         # Create ingestion plan using planner agent (async)
+        api_logger.info("Starting plan creation",
+                       run_id=run_id,
+                       doc_uri=request.doc_uri)
+        
         plan = await agent.create_ingestion_plan_async(
             doc_uri=request.doc_uri,
             metadata={
@@ -105,25 +140,46 @@ async def ingest_document(request: IngestRequest):
             }
         )
         
+        # Update run status
+        active_runs[run_id]["status"] = "executing"
+        active_runs[run_id]["plan"] = plan
+        
+        api_logger.info("Plan creation completed, starting execution",
+                       run_id=run_id,
+                       plan_id=plan.get("plan_id"),
+                       steps_count=len(plan.get("steps", [])))
+        
         # Get execution agent and execute the plan
         executor = get_execution_agent()
         
         # Execute the plan using content from plan steps (Approach 2)
         execution_results = await executor.execute_plan_async(plan)
         
+        # Determine overall execution status
+        execution_success = all(r.get('status') == 'completed' for r in execution_results)
+        final_status = "completed" if execution_success else "failed"
+        
         # Store run information
         run_data = {
             "run_id": run_id,
             "plan_id": plan["plan_id"],
             "doc_uri": request.doc_uri,
-            "status": "completed",
-            "created_at": datetime.now().isoformat(),
+            "status": final_status,
+            "created_at": active_runs[run_id]["start_time"],
             "completed_at": datetime.now().isoformat(),
             "plan": plan,
-            "execution_results": execution_results
+            "execution_results": execution_results,
+            "errors": [r.get('error') for r in execution_results if r.get('error')]
         }
         
         active_runs[run_id] = run_data
+        
+        # Log completion
+        api_logger.info("Ingestion request completed",
+                       run_id=run_id,
+                       plan_id=plan["plan_id"],
+                       status=final_status,
+                       execution_time_ms=(datetime.now() - datetime.fromisoformat(active_runs[run_id]["start_time"])).total_seconds() * 1000)
         
         return IngestResponse(
             run_id=run_id,
@@ -141,22 +197,40 @@ async def ingest_document(request: IngestRequest):
                 "plan_id": plan.get("plan_id", "") if 'plan' in locals() else "",
                 "doc_uri": request.doc_uri,
                 "status": "failed",
-                "created_at": datetime.now().isoformat(),
+                "created_at": active_runs.get(run_id, {}).get("start_time", datetime.now().isoformat()),
+                "completed_at": datetime.now().isoformat(),
+                "plan": plan if 'plan' in locals() else {},
+                "execution_results": [],
                 "errors": [str(e)]
             }
-            if 'plan' in locals():
-                error_data["plan"] = plan
             active_runs[run_id] = error_data
         
-        raise HTTPException(status_code=500, detail=str(e))
+        # Log error
+        api_logger.error("Ingestion request failed",
+                        run_id=run_id if 'run_id' in locals() else "unknown",
+                        doc_uri=request.doc_uri,
+                        error=str(e),
+                        error_type=type(e).__name__,
+                        endpoint="/ingest")
+        
+        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
 
 @app.get("/status/{run_id}", response_model=StatusResponse)
 async def get_run_status(run_id: str):
     """Get the status of a specific ingestion run."""
+    api_logger.info("Status request received", run_id=run_id, endpoint="/status")
+    
     if run_id not in active_runs:
+        api_logger.warning("Status request for unknown run_id", run_id=run_id)
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
     
     run_info = active_runs[run_id]
+    
+    api_logger.info("Status request completed",
+                   run_id=run_id,
+                   status=run_info["status"],
+                   endpoint="/status")
+    
     return StatusResponse(
         run_id=run_id,
         status=run_info["status"],
@@ -168,7 +242,12 @@ async def get_run_status(run_id: str):
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    api_logger.info("Health check requested", endpoint="/health")
+    return {
+        "status": "healthy", 
+        "timestamp": datetime.now().isoformat(),
+        "structured_logging": STRUCTURED_LOGGING_AVAILABLE
+    }
 
 if __name__ == "__main__":
     import uvicorn

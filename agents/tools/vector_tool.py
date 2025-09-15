@@ -48,6 +48,25 @@ try:
             }
         }
 except ImportError:
+    def get_tool_config():
+        return {
+            "tools": {
+                "vector_database": {
+                    "type": "qdrant",
+                    "url": os.getenv("QDRANT_API_URL", "http://localhost:6333"),
+                    "api_key": os.getenv("QDRANT_API_KEY"),
+                    "embedding_dimension": 1536,
+                    "collection_name": os.getenv("QDRANT_COLLECTION", "ingestion_documents")
+                }
+            }
+        }
+
+# Import structured logging
+try:
+    from config.logger_config import get_tool_logger
+    STRUCTURED_LOGGING_AVAILABLE = True
+except ImportError:
+    STRUCTURED_LOGGING_AVAILABLE = False
     # Fallback config using environment variables
     def get_tool_config():
         return {
@@ -490,7 +509,12 @@ class VectorTool:
     def __init__(self):
         """Initialize the vector ingestion tool."""
         self.config = get_tool_config()
-        self.logger = logging.getLogger(__name__)
+        
+        # Initialize structured logging
+        if STRUCTURED_LOGGING_AVAILABLE:
+            self.logger = get_tool_logger("vector_tool")
+        else:
+            self.logger = logging.getLogger(__name__)
         
         # Vector database configuration
         self.vector_config = self.config.get("tools", {}).get("vector_database", {})
@@ -525,7 +549,12 @@ class VectorTool:
         # Initialize deduplication catalog
         self.catalog = IngestionCatalog()
         
-        self.logger.info("VectorTool initialized with enhanced features and deduplication")
+        self.logger.info("VectorTool initialized",
+                        component="vector_tool",
+                        embedding_dimension=self.embedding_dimension,
+                        collection_name=self.collection_name,
+                        qdrant_available=self.qdrant_client is not None,
+                        openai_available=self.openai_client is not None)
     
     def _initialize_qdrant(self):
         """Initialize Qdrant client connection."""
@@ -615,8 +644,13 @@ class VectorTool:
         Returns:
             Dict with ingestion results
         """
+        doc_uri = metadata.get("doc_uri", "unknown")
+        
         try:
-            self.logger.info("Starting vector ingestion process with deduplication")
+            self.logger.info("Vector ingestion process started",
+                           doc_uri=doc_uri,
+                           operation="vector_ingestion",
+                           component="vector_tool")
             
             # Convert content to string if needed
             if isinstance(content, dict):
@@ -626,13 +660,19 @@ class VectorTool:
             else:
                 content_str = str(content)
             
-            doc_uri = metadata.get("doc_uri", "unknown")
-            
             # DEDUPLICATION: Check if content has changed
             current_hash = ContentHasher.compute_normalized_hash(content_str)
             
+            self.logger.info("Content hash computed",
+                           doc_uri=doc_uri,
+                           content_hash=current_hash[:8],  # First 8 chars for logging
+                           content_length=len(content_str))
+            
             if not self.catalog.has_content_changed(doc_uri, current_hash):
-                self.logger.info(f"Content unchanged for {doc_uri} - skipping ingestion")
+                self.logger.info("Content unchanged, skipping ingestion",
+                               doc_uri=doc_uri,
+                               operation="deduplication_skip",
+                               content_hash=current_hash[:8])
                 return {
                     "status": "skipped",
                     "operation": "vector_ingestion",
@@ -646,16 +686,43 @@ class VectorTool:
             self.catalog.update_entry(doc_uri, current_hash, IngestionStatus.PROCESSING)
             
             # Step 1: Chunk the content
+            self.logger.info("Starting content chunking",
+                           doc_uri=doc_uri,
+                           operation="chunking")
+            
             chunks = self._chunk_content(content_str, metadata)
-            self.logger.info(f"Created {len(chunks)} chunks from content")
+            
+            self.logger.info("Content chunking completed",
+                           doc_uri=doc_uri,
+                           operation="chunking",
+                           chunks_count=len(chunks))
             
             # Step 2: Generate embeddings for chunks
+            self.logger.info("Starting embedding generation",
+                           doc_uri=doc_uri,
+                           operation="embedding_generation",
+                           chunks_count=len(chunks))
+            
             documents = await self._generate_embeddings(chunks, metadata)
-            self.logger.info(f"Generated embeddings for {len(documents)} documents")
+            
+            self.logger.info("Embedding generation completed",
+                           doc_uri=doc_uri,
+                           operation="embedding_generation",
+                           documents_count=len(documents))
             
             # Step 3: Store in vector database
+            self.logger.info("Starting vector storage",
+                           doc_uri=doc_uri,
+                           operation="vector_storage",
+                           documents_count=len(documents))
+            
             storage_result = await self._store_vectors(documents)
-            self.logger.info(f"Stored {storage_result.get('stored_count', 0)} vectors in database")
+            stored_count = storage_result.get('stored_count', 0)
+            
+            self.logger.info("Vector storage completed",
+                           doc_uri=doc_uri,
+                           operation="vector_storage",
+                           stored_count=stored_count)
             
             # Update catalog with successful completion
             self.catalog.update_entry(
@@ -666,6 +733,13 @@ class VectorTool:
                 chunk_count=len(chunks),
                 embedding_count=len(documents)
             )
+            
+            self.logger.info("Vector ingestion process completed successfully",
+                           doc_uri=doc_uri,
+                           operation="vector_ingestion",
+                           chunks_count=len(chunks),
+                           stored_count=stored_count,
+                           content_hash=current_hash[:8])
             
             return {
                 "status": "success",
@@ -683,10 +757,14 @@ class VectorTool:
             }
             
         except Exception as e:
-            self.logger.error(f"Vector ingestion failed: {e}")
+            self.logger.error("Vector ingestion failed",
+                            doc_uri=doc_uri,
+                            operation="vector_ingestion",
+                            error=str(e),
+                            error_type=type(e).__name__,
+                            component="vector_tool")
             
             # Update catalog with failure status
-            doc_uri = metadata.get("doc_uri", "unknown")
             if 'current_hash' in locals():
                 self.catalog.update_entry(doc_uri, current_hash, IngestionStatus.FAILED, metadata={"error": str(e)})
             

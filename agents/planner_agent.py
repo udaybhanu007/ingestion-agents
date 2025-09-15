@@ -44,6 +44,14 @@ from utils.common_function import (
     create_ingestion_step, format_classification_result
 )
 
+# Import structured logging
+try:
+    from config.logger_config import get_react_logger, get_agent_logger
+    STRUCTURED_LOGGING_AVAILABLE = True
+except ImportError:
+    STRUCTURED_LOGGING_AVAILABLE = False
+    import logging
+
 
 class PlannerAgent:
     """
@@ -58,7 +66,14 @@ class PlannerAgent:
         Args:
             env_file: Path to environment file for credentials
         """
-        self.logger = setup_logging("INFO")
+        # Initialize structured logging
+        if STRUCTURED_LOGGING_AVAILABLE:
+            self.logger = get_agent_logger("planner")
+            self.react_logger = None  # Will be initialized per execution
+        else:
+            self.logger = setup_logging("INFO")
+            self.react_logger = None
+            
         self.env_file = env_file
         
         # Load environment variables
@@ -72,6 +87,11 @@ class PlannerAgent:
         
         # Load guidelines
         self.guidelines = self._load_guidelines()
+        
+        self.logger.info("PlannerAgent initialized", 
+                        component="planner_agent",
+                        openai_available=OPENAI_AVAILABLE,
+                        structured_logging=STRUCTURED_LOGGING_AVAILABLE)
     
     def _load_environment(self, env_file: str):
         """Load environment variables from file."""
@@ -82,11 +102,14 @@ class PlannerAgent:
             if os.path.exists(env_path):
                 load_dotenv(env_path)
                 env_file_loaded = env_path
-                self.logger.info(f"Loaded environment from {env_path}")
+                self.logger.info("Environment file loaded", 
+                               file_path=env_path,
+                               component="planner_agent")
                 break
         
         if not env_file_loaded:
-            self.logger.warning("No environment file found. Using system environment variables.")
+            self.logger.warning("No environment file found, using system environment",
+                              component="planner_agent")
     
     def _initialize_llm(self):
         """Initialize Azure OpenAI client."""
@@ -227,36 +250,120 @@ class PlannerAgent:
         Returns:
             Dict containing the ingestion plan
         """
+        # Initialize ReAct logger for this execution
+        execution_id = generate_uuid()
+        if STRUCTURED_LOGGING_AVAILABLE:
+            self.react_logger = get_react_logger("planner", execution_id)
+            self.react_logger.reasoning(
+                "Starting ingestion plan creation", 
+                {
+                    "doc_uri": doc_uri,
+                    "has_metadata": metadata is not None,
+                    "has_content": content is not None
+                }
+            )
+        
         try:
             fetched_content = content
+            
+            # REASONING: Determine content acquisition strategy
+            if STRUCTURED_LOGGING_AVAILABLE:
+                self.react_logger.reasoning(
+                    "Analyzing content availability and acquisition strategy",
+                    {"content_provided": content is not None}
+                )
             
             # Content should always be provided or fetched
             if fetched_content:
                 if isinstance(fetched_content, bytes):
                     fetched_content = fetched_content.decode('utf-8', errors='ignore')
                 
-                # Use LLM classification
+                # ACTION: Use LLM classification
+                if STRUCTURED_LOGGING_AVAILABLE:
+                    self.react_logger.action(
+                        "classify_document_with_llm",
+                        {"doc_uri": doc_uri, "content_length": len(fetched_content)}
+                    )
+                
                 classification_result = await self.classify_document_with_llm(fetched_content, doc_uri, metadata)
+                
+                # OBSERVATION: Document classification completed
+                if STRUCTURED_LOGGING_AVAILABLE:
+                    self.react_logger.observation(
+                        classification_result,
+                        success=True
+                    )
             else:
-                # Fetch content from connector
+                # ACTION: Fetch content from connector
+                if STRUCTURED_LOGGING_AVAILABLE:
+                    self.react_logger.action("fetch_content_from_connector", {"doc_uri": doc_uri})
+                
                 connector = await self._get_connector(doc_uri)
                 if connector:
                     fetched_content = await self._fetch_content_async(connector, doc_uri)
                     if fetched_content:
+                        # OBSERVATION: Content fetched successfully
+                        if STRUCTURED_LOGGING_AVAILABLE:
+                            self.react_logger.observation(
+                                {"content_length": len(fetched_content), "connector_type": type(connector).__name__},
+                                success=True
+                            )
+                        
                         classification_result = await self.classify_document_with_llm(fetched_content, doc_uri, metadata)
                     else:
-                        raise ValueError(f"Unable to fetch content for {doc_uri}")
+                        error_msg = f"Unable to fetch content for {doc_uri}"
+                        if STRUCTURED_LOGGING_AVAILABLE:
+                            self.react_logger.observation(None, success=False, error=error_msg)
+                        raise ValueError(error_msg)
                 else:
-                    raise ValueError(f"No connector available for {doc_uri}")
+                    error_msg = f"No connector available for {doc_uri}"
+                    if STRUCTURED_LOGGING_AVAILABLE:
+                        self.react_logger.observation(None, success=False, error=error_msg)
+                    raise ValueError(error_msg)
             
-            # Generate the ingestion plan with content
+            # PLANNING: Generate ingestion plan based on classification
+            if STRUCTURED_LOGGING_AVAILABLE:
+                self.react_logger.planning(
+                    classification_result,
+                    "Generating ingestion plan based on document classification and analysis"
+                )
+            
+            # ACTION: Generate the ingestion plan with content
+            if STRUCTURED_LOGGING_AVAILABLE:
+                self.react_logger.action("generate_ingestion_plan", {"classification": classification_result})
+            
             plan = self.generate_ingestion_plan(classification_result, fetched_content)
             
-            self.logger.info(f"Created ingestion plan for {doc_uri}")
+            # OBSERVATION: Plan generation completed
+            if STRUCTURED_LOGGING_AVAILABLE:
+                self.react_logger.observation(
+                    {"plan_id": plan.get("plan_id"), "steps_count": len(plan.get("steps", []))},
+                    success=True
+                )
+            
+            self.logger.info("Ingestion plan created successfully",
+                           doc_uri=doc_uri,
+                           execution_id=execution_id,
+                           plan_id=plan.get("plan_id"))
             return plan
             
         except Exception as e:
-            self.logger.error(f"Failed to create ingestion plan for {doc_uri}: {e}")
+            # ERROR: Log the error with full context
+            if STRUCTURED_LOGGING_AVAILABLE and self.react_logger:
+                self.react_logger.error(
+                    e, 
+                    {
+                        "doc_uri": doc_uri,
+                        "operation": "create_ingestion_plan",
+                        "execution_id": execution_id
+                    }
+                )
+            
+            self.logger.error("Ingestion plan creation failed",
+                            doc_uri=doc_uri,
+                            error=str(e),
+                            error_type=type(e).__name__,
+                            execution_id=execution_id)
             # Re-raise the exception since content is mandatory
             raise ValueError(f"Ingestion plan creation failed for {doc_uri}: {str(e)}")
 

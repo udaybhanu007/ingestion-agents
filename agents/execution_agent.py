@@ -29,6 +29,13 @@ except ImportError as e:
     get_tool_registry = None
     TOOLS_AVAILABLE = False
 
+# Import structured logging
+try:
+    from config.logger_config import get_react_logger, get_agent_logger
+    STRUCTURED_LOGGING_AVAILABLE = True
+except ImportError:
+    STRUCTURED_LOGGING_AVAILABLE = False
+
 
 class ExecutionAgent:
     """
@@ -37,8 +44,20 @@ class ExecutionAgent:
     
     def __init__(self):
         """Initialize the execution agent."""
-        self.logger = logging.getLogger(__name__)
+        # Initialize structured logging
+        if STRUCTURED_LOGGING_AVAILABLE:
+            self.logger = get_agent_logger("executor")
+            self.react_logger = None  # Will be initialized per execution
+        else:
+            self.logger = logging.getLogger(__name__)
+            self.react_logger = None
+            
         self.tools = self._initialize_tools()
+        
+        self.logger.info("ExecutionAgent initialized",
+                        component="execution_agent",
+                        tools_available=TOOLS_AVAILABLE,
+                        structured_logging=STRUCTURED_LOGGING_AVAILABLE)
         
         # Note: Connectors and URI resolver removed - content comes from plan steps
     
@@ -196,44 +215,160 @@ class ExecutionAgent:
         Returns:
             List of execution results for each step
         """
+        # Initialize ReAct logger for this execution
+        execution_id = plan.get('plan_id', f"exec_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        if STRUCTURED_LOGGING_AVAILABLE:
+            self.react_logger = get_react_logger("executor", execution_id)
+            self.react_logger.reasoning(
+                "Starting plan execution",
+                {
+                    "plan_id": plan.get('plan_id'),
+                    "steps_count": len(plan.get('steps', [])),
+                    "execution_approach": "content_from_plan_steps"
+                }
+            )
+        
         try:
             steps = plan.get('steps', [])
             plan_id = plan.get('plan_id')
             
-            self.logger.info(f"Executing plan {plan_id} with {len(steps)} steps using content from plan")
+            self.logger.info("Plan execution started",
+                           plan_id=plan_id,
+                           steps_count=len(steps),
+                           execution_id=execution_id)
             
-            # Extract content from plan steps
+            # REASONING: Analyze plan structure and extract content
+            if STRUCTURED_LOGGING_AVAILABLE:
+                self.react_logger.reasoning(
+                    "Analyzing plan structure and extracting content from steps",
+                    {"steps_count": len(steps)}
+                )
+            
+            # ACTION: Extract content from plan steps
+            if STRUCTURED_LOGGING_AVAILABLE:
+                self.react_logger.action("extract_content_from_steps", {"steps": len(steps)})
+            
             content = self._extract_content_from_steps(steps)
+            
+            # OBSERVATION: Content extraction result
             if not content:
+                error_msg = 'No content found in plan steps'
+                if STRUCTURED_LOGGING_AVAILABLE:
+                    self.react_logger.observation(None, success=False, error=error_msg)
+                
                 return [{
                     'status': 'failed',
-                    'error': 'No content found in plan steps',
-                    'plan_id': plan_id
+                    'error': error_msg,
+                    'plan_id': plan_id,
+                    'execution_id': execution_id
                 }]
+            else:
+                if STRUCTURED_LOGGING_AVAILABLE:
+                    self.react_logger.observation(
+                        {"content_length": len(content), "content_extracted": True},
+                        success=True
+                    )
+            
+            # PLANNING: Execute steps sequentially with dependency management
+            if STRUCTURED_LOGGING_AVAILABLE:
+                self.react_logger.planning(
+                    {"execution_strategy": "sequential_with_dependencies", "steps": steps},
+                    "Executing plan steps sequentially while respecting dependencies"
+                )
             
             # Execute each step
             step_results = []
             completed_tasks = set()
             
-            for step in steps:
-                # Wait for dependencies
+            for i, step in enumerate(steps):
+                step_id = step.get("task_id", f"step_{i}")
+                
+                # ACTION: Wait for dependencies
+                if STRUCTURED_LOGGING_AVAILABLE:
+                    self.react_logger.action(
+                        "wait_for_dependencies",
+                        {"step_id": step_id, "depends_on": step.get("depends_on", [])}
+                    )
+                
                 await self._wait_for_dependencies(step, completed_tasks)
                 
-                # Execute step with content from plan
+                # ACTION: Execute individual step
+                if STRUCTURED_LOGGING_AVAILABLE:
+                    self.react_logger.action(
+                        "execute_step",
+                        {
+                            "step_id": step_id,
+                            "tool": step.get("tool"),
+                            "task": step.get("task")
+                        }
+                    )
+                
                 step_result = await self._execute_single_step(step, content)
                 step_results.append(step_result)
                 completed_tasks.add(step["task_id"])
                 
-                self.logger.info(f"Completed step {step['task_id']}: {step['tool']} - {step_result.get('status', 'unknown')}")
+                # OBSERVATION: Step execution result
+                step_success = step_result.get('status') == 'completed'
+                if STRUCTURED_LOGGING_AVAILABLE:
+                    self.react_logger.observation(
+                        {
+                            "step_id": step_id,
+                            "status": step_result.get('status'),
+                            "tool": step.get("tool")
+                        },
+                        success=step_success,
+                        error=step_result.get('error') if not step_success else None
+                    )
+                
+                self.logger.info("Step execution completed",
+                               step_id=step_id,
+                               tool=step.get("tool"),
+                               status=step_result.get('status'),
+                               execution_id=execution_id)
+            
+            # OBSERVATION: Plan execution completed
+            if STRUCTURED_LOGGING_AVAILABLE:
+                successful_steps = sum(1 for r in step_results if r.get('status') == 'completed')
+                self.react_logger.observation(
+                    {
+                        "total_steps": len(steps),
+                        "successful_steps": successful_steps,
+                        "failed_steps": len(steps) - successful_steps
+                    },
+                    success=True
+                )
+            
+            self.logger.info("Plan execution completed",
+                           plan_id=plan_id,
+                           execution_id=execution_id,
+                           total_steps=len(steps),
+                           successful_steps=sum(1 for r in step_results if r.get('status') == 'completed'))
             
             return step_results
             
         except Exception as e:
-            self.logger.error(f"Error executing plan: {str(e)}")
+            # ERROR: Log execution failure
+            if STRUCTURED_LOGGING_AVAILABLE and self.react_logger:
+                self.react_logger.error(
+                    e,
+                    {
+                        "plan_id": plan.get('plan_id'),
+                        "operation": "execute_plan",
+                        "execution_id": execution_id
+                    }
+                )
+            
+            self.logger.error("Plan execution failed",
+                            plan_id=plan.get('plan_id'),
+                            error=str(e),
+                            error_type=type(e).__name__,
+                            execution_id=execution_id)
+            
             return [{
                 'status': 'failed',
                 'error': str(e),
-                'plan_id': plan.get('plan_id', 'unknown')
+                'plan_id': plan.get('plan_id', 'unknown'),
+                'execution_id': execution_id
             }]
     
     async def _wait_for_dependencies(self, step: Dict[str, Any], completed_tasks: set):

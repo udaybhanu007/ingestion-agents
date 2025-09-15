@@ -10,6 +10,13 @@ import logging
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 
+# Import logger configuration
+try:
+    from .logger_config import init_logging, get_logger
+    LOGGER_CONFIG_AVAILABLE = True
+except ImportError:
+    LOGGER_CONFIG_AVAILABLE = False
+
 
 class ConfigManager:
     """Centralized configuration manager for the ingestion agent application."""
@@ -21,7 +28,14 @@ class ConfigManager:
         Args:
             env_file (str): Path to environment file (defaults to .env.dev)
         """
-        self.logger = logging.getLogger(__name__)
+        # Initialize structured logging first
+        if LOGGER_CONFIG_AVAILABLE:
+            environment = os.getenv('ENVIRONMENT', 'dev')
+            init_logging(environment)
+            self.logger = get_logger(__name__)
+        else:
+            self.logger = logging.getLogger(__name__)
+            
         self.config: Dict[str, Any] = {}
         
         # Try different environment files in order of preference
@@ -32,11 +46,14 @@ class ConfigManager:
             if os.path.exists(env_path):
                 load_dotenv(env_path)
                 env_file_loaded = env_path
-                self.logger.info(f"Loaded environment from {env_path}")
+                self.logger.info("Environment file loaded", 
+                               file_path=env_path, 
+                               component="config_manager")
                 break
         
         if not env_file_loaded:
-            self.logger.warning("No environment file found. Using system environment variables.")
+            self.logger.warning("No environment file found, using system environment", 
+                              component="config_manager")
         
         # Load all configuration sections
         self._load_azure_config()
@@ -47,6 +64,7 @@ class ConfigManager:
         self._load_neo4j_config()
         self._load_langsmith_config()
         self._load_api_config()
+        self._load_logging_config()
     
     def _load_azure_config(self):
         """Load Azure Storage configuration."""
@@ -232,6 +250,14 @@ class ConfigManager:
         )
         
         return validation_results
+    
+    def _load_logging_config(self):
+        """Load logging configuration."""
+        self.config['logging'] = {
+            'environment': os.getenv('ENVIRONMENT', 'dev'),
+            'log_level': os.getenv('LOG_LEVEL', 'INFO'),
+            'structured_logging': LOGGER_CONFIG_AVAILABLE,
+        }
     
     def print_status(self):
         """Print configuration status."""

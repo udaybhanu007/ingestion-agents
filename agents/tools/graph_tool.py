@@ -411,39 +411,108 @@ class GraphIngestionTool:
                 "error": error_msg
             }
 
+    import re
+
+    def _split_paragraphs(self, text):
+        """Split text into paragraphs, skipping empty lines and page headers."""
+        paragraphs = []
+        for para in self.re.split(r'\n\s*\n', text):
+            para = para.strip()
+            if para and not para.startswith("## Page "):
+                paragraphs.append(para)
+        return paragraphs
+
+    def _merge_short_paragraphs(self, paragraphs, min_words=30):
+        """Merge paragraphs shorter than min_words with the next one."""
+        merged = []
+        buffer = ""
+        for para in paragraphs:
+            if len(para.split()) < min_words:
+                buffer += " " + para if buffer else para
+            else:
+                if buffer:
+                    merged.append(buffer.strip())
+                    buffer = ""
+                merged.append(para)
+        if buffer:
+            merged.append(buffer.strip())
+        return merged
+
+    def _chunk_with_overlap(self, paragraphs, chunk_size=3, overlap=1):
+        """Create overlapping chunks of paragraphs."""
+        chunks = []
+        i = 0
+        n = len(paragraphs)
+        while i < n:
+            chunk = paragraphs[i:i+chunk_size]
+            if chunk:
+                chunks.append("\n\n".join(chunk))
+            i += chunk_size - overlap
+        return chunks
+
+    def _split_large_chunks(self, chunks, max_words=400):
+        """Split chunks that are too large by sentences."""
+        result = []
+        for chunk in chunks:
+            words = chunk.split()
+            if len(words) <= max_words:
+                result.append(chunk)
+            else:
+                # Split by sentences if too large
+                sentences = self.re.split(r'(?<=[.!?])\s+', chunk)
+                temp = ""
+                for sent in sentences:
+                    if len((temp + " " + sent).split()) > max_words:
+                        if temp:
+                            result.append(temp.strip())
+                        temp = sent
+                    else:
+                        temp += " " + sent if temp else sent
+                if temp:
+                    result.append(temp.strip())
+        return result
+
+    def chunk_content(self, content, chunk_size=3, overlap=1, min_words=30, max_words=400):
+        """Full chunking pipeline."""
+        paragraphs = self._split_paragraphs(content)
+        merged = self._merge_short_paragraphs(paragraphs, min_words)
+        chunks = self._chunk_with_overlap(merged, chunk_size, overlap)
+        final_chunks = self._split_large_chunks(chunks, max_words)
+        return final_chunks
+
     def ingest_content(self, content: str, source_name: str = "document", content_type: str = "text", metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Main entry point for content ingestion - delegates to schema-driven approach.
-        
-        Args:
-            content: Text content to ingest
-            source_name: Name/identifier for the source document 
-            content_type: Type of content (text, json, etc.)
-            metadata: Additional metadata about the content
-            
-        Returns:
-            Dict with success status and ingestion results
+        Now uses paragraph-based overlapping chunking.
         """
         try:
             # Determine document type from content_type and metadata
             document_type = content_type
             if metadata and "document_type" in metadata:
                 document_type = metadata["document_type"]
-            
+
             self.logger.info(f"Starting content ingestion for '{source_name}' (type: {document_type})")
-            
-            # Use schema-driven ingestion approach
-            result = self.ingest_content_with_schema_validation(content, document_type)
-            
-            # Add source information to result
-            if result.get("success"):
-                result["source_name"] = source_name
-                result["content_type"] = content_type
-                if metadata:
-                    result["metadata"] = metadata
-            
-            return result
-            
+
+            # Chunk the content before ingestion
+            chunked_contents = self.chunk_content(content)
+            results = []
+            for chunk in chunked_contents:
+                # Use schema-driven ingestion approach for each chunk
+                result = self.ingest_content_with_schema_validation(chunk, document_type)
+                if result.get("success"):
+                    result["source_name"] = source_name
+                    result["content_type"] = content_type
+                    if metadata:
+                        result["metadata"] = metadata
+                results.append(result)
+
+            # Aggregate results
+            all_success = all(r.get("success") for r in results)
+            return {
+                "success": all_success,
+                "results": results
+            }
+
         except Exception as e:
             error_msg = f"Content ingestion failed: {str(e)}"
             self.logger.error(error_msg)

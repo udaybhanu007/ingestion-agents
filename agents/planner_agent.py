@@ -273,12 +273,18 @@ class PlannerAgent:
                 return str(result) if result else None
             
             if connector_type == "azure":
-                # Parse Azure URI: azure://container/blob_name
-                parts = doc_uri.replace("azure://", "").split("/", 1)
-                if len(parts) == 2:
-                    container_name, blob_name = parts
-                    content = connector.download_blob(container_name, blob_name)
-                    return content if isinstance(content, str) else content.decode('utf-8', errors='ignore')
+                # Use the unified get_document_content interface
+                if hasattr(connector, 'get_document_content'):
+                    result = await connector.get_document_content(doc_uri)
+                    if isinstance(result, dict) and 'content' in result:
+                        return result['content']
+                else:
+                    # Fallback to direct download_blob method
+                    parts = doc_uri.replace("azure://", "").split("/", 1)
+                    if len(parts) == 2:
+                        container_name, blob_name = parts
+                        content = connector.download_blob(container_name, blob_name)
+                        return content if isinstance(content, str) else content.decode('utf-8', errors='ignore')
                     
             elif connector_type == "box":
                 # Parse Box URI: box://file/file_id

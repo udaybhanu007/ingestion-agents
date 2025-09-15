@@ -140,6 +140,14 @@ class BoxConnector:
             # Replace the global requests session
             requests.sessions.Session = lambda: session
             
+            # Additional fix for the Box SDK specifically
+            try:
+                from boxsdk.network.default_network import DefaultNetwork
+                DefaultNetwork._session = session
+                self.logger.info("Box SDK network session patched for SSL")
+            except Exception as e:
+                self.logger.warning(f"Box SDK network patch failed: {e}")
+            
             self.logger.info("Aggressive SSL fix applied for Box authentication")
             
         except Exception as e:
@@ -751,6 +759,87 @@ class BoxConnector:
         except Exception as e:
             self.logger.error(f"Error getting metadata for file {file_id}: {e}")
             return {}
+
+    def get_file_content(self, file_id: str) -> Optional[str]:
+        """
+        Get file content as string directly from Box without saving to disk.
+        
+        Args:
+            file_id (str): Box file ID
+            
+        Returns:
+            Optional[str]: File content as string, None if error
+        """
+        try:
+            if not self.client:
+                self.logger.error("Not authenticated")
+                return None
+            
+            file_obj = self.client.file(file_id)
+            file_content = file_obj.content()
+            
+            # Convert bytes to string with error handling
+            if isinstance(file_content, bytes):
+                content_str = file_content.decode('utf-8', errors='ignore')
+            else:
+                content_str = str(file_content)
+            
+            self.logger.info(f"Retrieved content for file {file_id} ({len(content_str)} characters)")
+            return content_str
+            
+        except Exception as e:
+            self.logger.error(f"Error getting content for file {file_id}: {e}")
+            return None
+
+    async def get_document_content(self, doc_uri: str) -> Optional[Dict[str, Any]]:
+        """
+        Get document content from Box URI (async interface for planner agent).
+        
+        Args:
+            doc_uri (str): Document URI in format 'box://file/file_id'
+            
+        Returns:
+            Optional[Dict[str, Any]]: Dictionary with content and metadata, None if error
+        """
+        try:
+            # Parse Box URI: box://file/file_id
+            if not doc_uri.startswith("box://"):
+                self.logger.error(f"Invalid Box URI format: {doc_uri}")
+                return None
+            
+            parts = doc_uri.replace("box://", "").split("/")
+            if len(parts) < 2 or parts[0] != "file":
+                self.logger.error(f"Invalid Box URI format: {doc_uri}. Expected 'box://file/file_id'")
+                return None
+            
+            file_id = parts[1]
+            self.logger.info(f"Extracting content for Box file ID: {file_id}")
+            
+            # Get file content and metadata
+            content = self.get_file_content(file_id)
+            if content is None:
+                return None
+            
+            metadata = self.get_file_metadata(file_id)
+            
+            result = {
+                "content": content,
+                "metadata": {
+                    "doc_uri": doc_uri,
+                    "file_id": file_id,
+                    "connector_type": "box",
+                    "content_type": "text/plain",
+                    "size": len(content),
+                    **metadata
+                }
+            }
+            
+            self.logger.info(f"Successfully retrieved document content for {doc_uri}")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error getting document content for {doc_uri}: {e}")
+            return None
     
     def fetch_folder_documents(self, folder_name: str) -> Dict[str, Union[str, List, int, Dict]]:
         """

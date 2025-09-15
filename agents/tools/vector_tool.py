@@ -406,17 +406,23 @@ class DocumentChunker:
     
     def extract_chunks(self, file_path: str, content: str) -> List[Dict[str, Any]]:
         """Extract chunks from content with metadata."""
+        print(f"🔍 DEBUG: Starting chunking for content length: {len(content)} chars")
+        
         # Step 1: Split into paragraphs
         paragraphs = self.split_markdown_paragraphs(content)
+        print(f"🔍 DEBUG: Split into {len(paragraphs)} paragraphs")
         
         # Step 2: Merge short paragraphs
         merged_paragraphs = self.merge_short_paragraphs(paragraphs)
+        print(f"🔍 DEBUG: After merging short paragraphs: {len(merged_paragraphs)} paragraphs")
         
         # Step 3: Create overlapping chunks
         chunks = self.chunk_with_overlap(merged_paragraphs)
+        print(f"🔍 DEBUG: After overlap chunking: {len(chunks)} chunks")
         
         # Step 4: Split oversized chunks
         refined_chunks = self.split_large_chunks(chunks)
+        print(f"🔍 DEBUG: After splitting large chunks: {len(refined_chunks)} final chunks")
         
         # Step 5: Create chunk objects with metadata
         chunk_list = []
@@ -557,12 +563,25 @@ class VectorTool:
                         openai_available=self.openai_client is not None)
     
     def _initialize_qdrant(self):
-        """Initialize Qdrant client connection."""
+        """Initialize Qdrant client connection with SSL fix."""
         if QdrantClient is None:
             self.logger.warning("Qdrant client not available")
             return
         
         try:
+            # Apply SSL fixes before connection
+            import ssl
+            import os
+            os.environ['PYTHONHTTPSVERIFY'] = '0'
+            ssl._create_default_https_context = ssl._create_unverified_context
+            
+            # Disable urllib3 warnings
+            try:
+                import urllib3
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            except ImportError:
+                pass
+            
             url = self.vector_config.get("url", "http://localhost:6333")
             api_key = self.vector_config.get("api_key")
             
@@ -571,11 +590,16 @@ class VectorTool:
                 self.qdrant_client = QdrantClient(
                     url=url, 
                     api_key=api_key,
-                    timeout=10.0  # Shorter timeout for faster feedback
+                    timeout=30.0,  # Longer timeout for SSL issues
+                    prefer_grpc=False  # Use REST API to avoid gRPC SSL issues
                 )
                 self.logger.info(f"Connecting to Qdrant cloud at: {url}")
             else:
-                self.qdrant_client = QdrantClient(url=url, timeout=10.0)
+                self.qdrant_client = QdrantClient(
+                    url=url, 
+                    timeout=30.0,
+                    prefer_grpc=False
+                )
                 self.logger.info(f"Connecting to local Qdrant at: {url}")
             
             # Test connection and create collection if it doesn't exist

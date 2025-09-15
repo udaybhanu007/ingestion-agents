@@ -100,7 +100,6 @@ class GraphIngestionTool:
         self.processing_stats = {
             "documents_processed": 0,
             "schemas_generated": 0,
-            "constraints_created": 0,
             "entities_ingested": 0,
             "relationships_created": 0,
             "errors": []
@@ -114,7 +113,7 @@ class GraphIngestionTool:
     
     @property
     def description(self) -> str:
-        return "Ingests structured and unstructured content into Neo4j graph database using MCP"
+        return "Ingests structured and unstructured content into Neo4j graph database using MCP with simplified 3-step workflow: analyze structure, generate schema, and ingest data."
     
     @property
     def priority(self) -> int:
@@ -218,11 +217,14 @@ class GraphIngestionTool:
         """
         Main ingestion method using schema-driven approach with dual MCP servers.
         
-        Workflow:
+        Simplified Workflow:
         1. Analyze document structure using data modeling server
         2. Generate and validate schema 
-        3. Create constraints in Neo4j via cypher server
-        4. Ingest data using validated schema
+        3. Ingest data using validated schema
+        
+        Args:
+            content: Content to ingest
+            document_type: Type of document being ingested
         """
         try:
             # Initialize servers
@@ -276,19 +278,8 @@ class GraphIngestionTool:
             schema = schema_response.get("result", schema_response)
             self.processing_stats["schemas_generated"] += 1
             
-            # Step 3: Validate and create constraints
-            self.logger.info("Step 3: Creating database constraints...")
-            constraints_result = self._create_schema_constraints(schema)
-            
-            if not constraints_result["success"]:
-                return {
-                    "success": False,
-                    "error": f"Constraint creation failed: {constraints_result['error']}",
-                    "stats": self.processing_stats
-                }
-            
-            # Step 4: Ingest data using schema
-            self.logger.info("Step 4: Ingesting data with schema validation...")
+            # Step 3: Ingest data using schema
+            self.logger.info("Step 3: Ingesting data with schema validation...")
             ingestion_result = self._ingest_with_schema(content, schema, document_type)
             
             if ingestion_result["success"]:
@@ -305,46 +296,6 @@ class GraphIngestionTool:
                 "success": False,
                 "error": error_msg,
                 "stats": self.processing_stats
-            }
-    
-    def _create_schema_constraints(self, schema: Dict[str, Any]) -> Dict[str, Any]:
-        """Create database constraints based on generated schema."""
-        try:
-            constraints_created = 0
-            
-            # Extract node types and their properties
-            node_types = schema.get("nodes", {})
-            for node_type, properties in node_types.items():
-                # Create uniqueness constraints for ID properties
-                if "id" in properties or "name" in properties:
-                    id_property = "id" if "id" in properties else "name"
-                    constraint_query = f"CREATE CONSTRAINT IF NOT EXISTS FOR (n:{node_type}) REQUIRE n.{id_property} IS UNIQUE"
-                    
-                    constraint_response = self.make_mcp_request(
-                        self.cypher_server_url,
-                        "execute_cypher",
-                        {"query": constraint_query}
-                    )
-                    
-                    if "error" not in constraint_response:
-                        constraints_created += 1
-                        self.logger.info(f"Created constraint for {node_type}.{id_property}")
-                    else:
-                        self.logger.warning(f"Failed to create constraint for {node_type}: {constraint_response['error']}")
-            
-            self.processing_stats["constraints_created"] += constraints_created
-            
-            return {
-                "success": True,
-                "constraints_created": constraints_created
-            }
-            
-        except Exception as e:
-            error_msg = f"Constraint creation failed: {str(e)}"
-            self.logger.error(error_msg)
-            return {
-                "success": False,
-                "error": error_msg
             }
     
     def _ingest_with_schema(self, content: str, schema: Dict[str, Any], document_type: str) -> Dict[str, Any]:
@@ -427,50 +378,7 @@ class GraphIngestionTool:
             return {
                 "success": False,
                 "error": error_msg
-            }
-
-    def ingest_content(self, content: str, source_name: str = "document", content_type: str = "text", metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """
-        Main entry point for content ingestion - delegates to schema-driven approach.
-        
-        Args:
-            content: Text content to ingest
-            source_name: Name/identifier for the source document 
-            content_type: Type of content (text, json, etc.)
-            metadata: Additional metadata about the content
-            
-        Returns:
-            Dict with success status and ingestion results
-        """
-        try:
-            # Determine document type from content_type and metadata
-            document_type = content_type
-            if metadata and "document_type" in metadata:
-                document_type = metadata["document_type"]
-            
-            self.logger.info(f"Starting content ingestion for '{source_name}' (type: {document_type})")
-            
-            # Use schema-driven ingestion approach
-            result = self.ingest_content_with_schema_validation(content, document_type)
-            
-            # Add source information to result
-            if result.get("success"):
-                result["source_name"] = source_name
-                result["content_type"] = content_type
-                if metadata:
-                    result["metadata"] = metadata
-            
-            return result
-            
-        except Exception as e:
-            error_msg = f"Content ingestion failed: {str(e)}"
-            self.logger.error(error_msg)
-            self.processing_stats["errors"].append(error_msg)
-            return {
-                "success": False,
-                "error": error_msg,
-                "stats": self.processing_stats
-            }
+            }    
 
     def get_processing_stats(self) -> Dict[str, Any]:
         """Get current processing statistics."""
@@ -481,7 +389,6 @@ class GraphIngestionTool:
         self.processing_stats = {
             "documents_processed": 0,
             "schemas_generated": 0,
-            "constraints_created": 0,
             "entities_ingested": 0,
             "relationships_created": 0,
             "errors": []
@@ -489,5 +396,5 @@ class GraphIngestionTool:
         self.logger.info("Processing statistics reset")
 
 
-# For backward compatibility - export the main class
+# For backward compatibility - export the main class and key methods
 __all__ = ["GraphIngestionTool"]

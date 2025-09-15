@@ -491,41 +491,8 @@ class PlannerAgent:
             if step.get('depends_on'):
                 self.logger.info(f"  Depends on: {', '.join(step['depends_on'])}")
         
-        self.logger.info("=" * 60)
-    
-    def save_plan_to_json(self, plan: Dict[str, Any], filename: Optional[str] = None) -> bool:
-        """
-        Explicitly save an ingestion plan to a JSON file.
-        
-        Args:
-            plan: Generated ingestion plan
-            filename: Optional filename. If not provided, generates one with timestamp and plan ID
-            
-        Returns:
-            bool: True if saved successfully, False otherwise
-        """
-        try:
-            if filename is None:
-                # Generate filename with timestamp and plan ID
-                plan_id = plan.get('plan_id', 'unknown')
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"ingestion_plan_{timestamp}_{plan_id}.json"
-            
-            # Ensure .json extension
-            if not filename.endswith('.json'):
-                filename += '.json'
-            
-            if save_json(plan, filename):
-                self.logger.info(f"✅ Plan saved successfully to: {filename}")
-                return True
-            else:
-                self.logger.error(f"❌ Failed to save plan to: {filename}")
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"❌ Error saving plan to JSON: {e}")
-            return False
-    
+        self.logger.info("=" * 60)    
+      
     def get_available_connectors(self) -> List[str]:
         """Get list of available and initialized connectors."""
         return [name for name, connector in self._connectors.items() if connector is not None]

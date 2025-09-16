@@ -90,11 +90,7 @@ class GraphIngestionTool:
         self.cypher_server_url = "http://127.0.0.1:8003/mcp/"
         self.data_modeling_server_url = "http://127.0.0.1:8004/mcp/" 
         
-        self.logger.info("GraphIngestionTool initialized",
-                        component="graph_tool",
-                        cypher_server_url=self.cypher_server_url,
-                        data_modeling_server_url=self.data_modeling_server_url,
-                        openai_deployment=openai_config.get('deployment_name'))
+        self.logger.info(f"GraphIngestionTool initialized - cypher_server: {self.cypher_server_url}, data_modeling_server: {self.data_modeling_server_url}")
         
         # Track processing state
         self.processing_stats = {

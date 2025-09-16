@@ -20,6 +20,10 @@ import uuid
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import hashlib
+from dotenv import load_dotenv
+
+# Load environment variables from .env.dev
+load_dotenv('.env.dev')
 
 # Add parent directory to path for config import
 parent_dir = os.path.dirname(os.path.dirname(__file__))
@@ -30,7 +34,8 @@ if parent_dir not in sys.path:
 try:
     from llama_index.core import Document
     from llama_index.core.node_parser import SentenceSplitter
-    from llama_index.embeddings.azure_openai import AzureOpenAIEmbedding
+    # Import Azure OpenAI client directly instead of LlamaIndex wrapper
+    from openai import AzureOpenAI
     LLAMAINDEX_AVAILABLE = True
 except ImportError:
     logging.warning("LlamaIndex not available - install with: pip install llama-index llama-index-embeddings-azure-openai")
@@ -45,35 +50,33 @@ except ImportError:
     logging.warning("Qdrant client not available - install with: pip install qdrant-client")
     QDRANT_AVAILABLE = False
 
-# Configuration management
-try:
-    from config.config_manager import get_config
-    config_manager = get_config()
-    def get_tool_config():
-        return config_manager
-except ImportError:
-    # Fallback configuration using environment variables
-    class MockConfig:
-        def get_config(self, section, key=None):
-            configs = {
-                "qdrant": {
-                    "url": os.getenv("QDRANT_URL", "http://localhost:6333"),
-                    "api_key": os.getenv("QDRANT_API_KEY"),
-                    "collection_name": os.getenv("QDRANT_COLLECTION", "documents_v2")
-                },
-                "openai": {
-                    "azure_endpoint": os.getenv("AZURE_OPENAI_ENDPOINT", ""),
-                    "azure_api_key": os.getenv("AZURE_OPENAI_API_KEY", ""),
-                    "api_version": os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview"),
-                    "embedding_deployment": os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-ada-002")
-                }
+# Configuration management - Force environment variables for .env.dev
+from dotenv import load_dotenv
+
+# Load .env.dev file explicitly
+load_dotenv('.env.dev')
+
+class EnvConfig:
+    def get_config(self, section, key=None):
+        configs = {
+            "qdrant": {
+                "url": os.getenv("QDRANT_API_URL", os.getenv("QDRANT_URL", "http://localhost:6333")),
+                "api_key": os.getenv("QDRANT_API_KEY"),
+                "collection_name": os.getenv("QDRANT_COLLECTION", "documents_v2")
+            },
+            "openai": {
+                "azure_endpoint": os.getenv("AZURE_OPENAI_ENDPOINT", ""),
+                "azure_api_key": os.getenv("AZURE_OPENAI_API_KEY", ""),
+                "api_version": os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview"),
+                "embedding_deployment": os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-ada-002")
             }
-            if key:
-                return configs.get(section, {}).get(key)
-            return configs.get(section, {})
-    
-    def get_tool_config():
-        return MockConfig()
+        }
+        if key:
+            return configs.get(section, {}).get(key)
+        return configs.get(section, {})
+
+def get_tool_config():
+    return EnvConfig()
 
 # Structured logging
 try:
@@ -134,14 +137,15 @@ class VectorToolV2:
         # Get OpenAI configuration
         openai_config = self.config.get_config('openai')
         
-        # Initialize Azure OpenAI embedding model
-        self.embedding_model = AzureOpenAIEmbedding(
-            model=openai_config.get('embedding_deployment', 'text-embedding-ada-002'),
+        # Initialize Azure OpenAI client directly for embeddings
+        self.azure_client = AzureOpenAI(
             azure_endpoint=openai_config.get('azure_endpoint'),
             api_key=openai_config.get('azure_api_key'),
-            api_version=openai_config.get('api_version'),
-            azure_deployment=openai_config.get('embedding_deployment')
+            api_version="2024-08-01-preview"
         )
+        
+        # Store embedding deployment name for API calls
+        self.embedding_deployment = openai_config.get('embedding_deployment', 'text-embedding-ada-002')
         
         # Initialize SentenceSplitter for intelligent document chunking
         # Optimized for academic/research documents with overlap for context preservation
@@ -153,10 +157,7 @@ class VectorToolV2:
             secondary_chunking_regex="[^,.;。]+[,.;。]?",  # Respect sentence boundaries
         )
         
-        self.logger.info("LlamaIndex components initialized", 
-                        component="vector_toolv2",
-                        chunk_size=1024,
-                        chunk_overlap=20)
+        self.logger.info("LlamaIndex components initialized - chunk_size: 1024, chunk_overlap: 20")
     
     def _init_qdrant_client(self):
         """Initialize Qdrant client and ensure collection exists."""
@@ -164,10 +165,15 @@ class VectorToolV2:
         # Get Qdrant configuration
         qdrant_config = self.config.get_config('qdrant')
         
+        # Debug logging to check actual values
+        qdrant_url = qdrant_config.get('url', 'http://localhost:6333')
+        qdrant_api_key = qdrant_config.get('api_key')
+        self.logger.info(f"Qdrant config debug - URL: {qdrant_url}, API key present: {bool(qdrant_api_key)}")
+        
         # Initialize Qdrant client
         self.qdrant_client = QdrantClient(
-            url=qdrant_config.get('url', 'http://localhost:6333'),
-            api_key=qdrant_config.get('api_key')
+            url=qdrant_url,
+            api_key=qdrant_api_key
         )
         
         self.collection_name = qdrant_config.get('collection_name', 'documents_v2')
@@ -175,9 +181,7 @@ class VectorToolV2:
         # Ensure collection exists with proper vector configuration
         self._ensure_collection_exists()
         
-        self.logger.info("Qdrant client initialized",
-                        component="vector_toolv2", 
-                        collection=self.collection_name)
+        self.logger.info(f"Qdrant client initialized - collection: {self.collection_name}")
     
     def _ensure_collection_exists(self):
         """Ensure Qdrant collection exists with proper vector configuration."""
@@ -224,7 +228,7 @@ class VectorToolV2:
         
         return metadata
     
-    async def ingest_document(self, content: str, file_path: str, 
+    def ingest_document(self, content: str, file_path: str, 
                             metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Ingest a document using LlamaIndex SentenceSplitter and store in Qdrant.
@@ -254,7 +258,15 @@ class VectorToolV2:
             
             # Step 2: Parse document into chunks using SentenceSplitter
             self.logger.info("Parsing document with SentenceSplitter...")
+            self.logger.info(f"Document content length: {len(content)} characters")
+            self.logger.info(f"Chunk size configured: 1024 characters")
+            
             nodes = self.sentence_splitter.get_nodes_from_documents([document])
+            
+            # Debug: Log actual chunk sizes
+            if nodes:
+                for i, node in enumerate(nodes):
+                    self.logger.info(f"Chunk {i+1}: {len(node.text)} characters")
             
             if not nodes:
                 return {
@@ -262,17 +274,19 @@ class VectorToolV2:
                     "error": "No chunks created from document",
                     "stats": self.stats
                 }
-            
+
             self.stats["chunks_created"] += len(nodes)
-            self.logger.info(f"Created {len(nodes)} chunks from document")
-            
-            # Step 3: Generate embeddings for all chunks
+            self.logger.info(f"Created {len(nodes)} chunks from document")            # Step 3: Generate embeddings for all chunks
             self.logger.info("Generating embeddings...")
             embedded_nodes = []
             
             for node in nodes:
-                # Generate embedding for the chunk
-                embedding = await self.embedding_model.aget_text_embedding(node.text)
+                # Generate embedding for the chunk using Azure OpenAI client directly
+                response = self.azure_client.embeddings.create(
+                    input=node.text,
+                    model=self.embedding_deployment
+                )
+                embedding = response.data[0].embedding
                 
                 # Create enhanced metadata for the chunk
                 chunk_metadata = node.metadata.copy()
@@ -319,9 +333,7 @@ class VectorToolV2:
             self.stats["vectors_stored"] += len(points)
             self.stats["documents_processed"] += 1
             
-            self.logger.info(f"Successfully ingested document: {file_path}",
-                           chunks_created=len(nodes),
-                           vectors_stored=len(points))
+            self.logger.info(f"Successfully ingested document: {file_path} - chunks_created: {len(nodes)}, vectors_stored: {len(points)}")
             
             return {
                 "success": True,
@@ -345,7 +357,7 @@ class VectorToolV2:
                 "stats": self.stats.copy()
             }
     
-    async def ingest(self, content: Any, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    def ingest(self, content: Any, metadata: Dict[str, Any]) -> Dict[str, Any]:
         """
         Compatibility method for existing execution agent integration.
         
@@ -364,7 +376,7 @@ class VectorToolV2:
             content = str(content)
         
         # Call the main ingestion method
-        return await self.ingest_document(content, file_path, metadata)
+        return self.ingest_document(content, file_path, metadata)
     
     def get_stats(self) -> Dict[str, Any]:
         """Get current processing statistics."""
@@ -427,7 +439,7 @@ async def main():
         
         if tool.enabled:
             # Test document ingestion
-            result = await tool.ingest_document(
+            result = tool.ingest_document(
                 content=sample_content,
                 file_path="test_documents/ai_healthcare.md",
                 metadata={

@@ -148,7 +148,9 @@ class ExecutionAgent:
             elif step_type == "text_chunking":
                 return await self._execute_text_chunking(step, plan)
             elif step_type == "vector_generation":
-                return await self._execute_vector_generation(step, plan)
+                return await self._execute_vector_ingestion(step, plan)
+            elif step_type == "graph_ingestion":
+                return await self._execute_graph_ingestion(step, plan)
             elif step_type == "metadata_extraction":
                 return await self._execute_metadata_extraction(step, plan)
             elif step_type == "storage":
@@ -312,6 +314,111 @@ class ExecutionAgent:
             return {
                 'success': False,
                 'error': f'Storage failed: {e}',
+                'step_id': step.get('step_id')
+            }
+
+    async def _execute_vector_ingestion(self, step: Dict[str, Any], plan: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute vector ingestion step using VectorToolV2."""
+        try:
+            # Get vector ingestion tool
+            tool = self.tool_registry.get_tool("vector_ingestion")
+            if not tool:
+                return {
+                    'success': False,
+                    'error': 'Vector ingestion tool not available',
+                    'step_id': step.get('step_id')
+                }
+            
+            # Get document URI and content from plan
+            args = step.get('args', {})
+            doc_uri = args.get('doc_uri', plan.get('document_uri', ''))
+            
+            # Get document content from plan context
+            content = plan.get('context', {}).get('content', '')
+            
+            if not doc_uri:
+                return {
+                    'success': False,
+                    'error': 'No document URI provided for vector ingestion',
+                    'step_id': step.get('step_id')
+                }
+            
+            if not content:
+                return {
+                    'success': False,
+                    'error': 'No document content available for vector ingestion',
+                    'step_id': step.get('step_id')
+                }
+            
+            # Execute vector ingestion with actual content
+            metadata = {
+                'source': 'execution_agent',
+                'step_id': step.get('step_id'),
+                'plan_id': plan.get('plan_id'),
+                'document_uri': doc_uri
+            }
+            
+            result = tool.ingest(content, metadata)
+            
+            return {
+                'success': result.get('success', False),
+                'result': result,
+                'vectors_stored': result.get('chunks_processed', 0),
+                'step_id': step.get('step_id')
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Vector ingestion failed: {e}',
+                'step_id': step.get('step_id')
+            }
+
+    async def _execute_graph_ingestion(self, step: Dict[str, Any], plan: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute graph ingestion step using GraphIngestionTool."""
+        try:
+            # Get graph ingestion tool
+            tool = self.tool_registry.get_tool("graph_ingestion")
+            if not tool:
+                return {
+                    'success': False,
+                    'error': 'Graph ingestion tool not available',
+                    'step_id': step.get('step_id')
+                }
+            
+            # Get document URI from step args
+            args = step.get('args', {})
+            doc_uri = args.get('doc_uri', plan.get('document_uri', ''))
+            
+            if not doc_uri:
+                return {
+                    'success': False,
+                    'error': 'No document URI provided for graph ingestion',
+                    'step_id': step.get('step_id')
+                }
+            
+            # Execute graph ingestion
+            metadata = {
+                'source': 'execution_agent',
+                'step_id': step.get('step_id'),
+                'plan_id': plan.get('plan_id'),
+                'doc_uri': doc_uri
+            }
+            
+            result = tool.ingest_content("", doc_uri, "document", metadata)  # Use sync ingest_content method
+            
+            return {
+                'success': result.get('success', False),
+                'result': result,
+                'nodes_created': result.get('nodes_created', 0),
+                'relationships_created': result.get('relationships_created', 0),
+                'step_id': step.get('step_id')
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Graph ingestion failed: {e}',
                 'step_id': step.get('step_id')
             }
 

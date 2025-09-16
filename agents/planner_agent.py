@@ -244,24 +244,39 @@ class PlannerAgent:
             plan = await self._create_plan_with_llm(
                 doc_uri, content, combined_metadata, structure_analysis, entities
             )
+            # Always set a valid UUID for plan_id
+            plan['plan_id'] = generate_uuid()
             
+            # Add context with the document content for execution
+            plan['context'] = {
+                'content': content_text,
+                'document_uri': doc_uri,
+                'metadata': combined_metadata
+            }
+            
+            # Patch: Add step_type to each step based on tool
+            for step in plan.get('steps', []):
+                tool = step.get('tool')
+                if tool == 'vector_ingestion':
+                    step['step_type'] = 'vector_generation'
+                elif tool == 'graph_ingestion':
+                    step['step_type'] = 'graph_ingestion'
+                else:
+                    step['step_type'] = 'unknown'
             # Validate plan
             try:
                 validation_result = validate_json_plan(plan)
                 if not validation_result["valid"]:
                     self.logger.warning(f"Plan validation failed: {validation_result['errors']}")
                     # Continue with the plan anyway
-                    
                 self.react_logger.observation(
                     f"Plan validation: {validation_result['valid']}"
                 )
             except Exception as e:
                 self.logger.error(f"Plan validation error: {e}")
-            
             self.react_logger.observation(
                 f"Ingestion plan created successfully with {len(plan.get('steps', []))} steps"
             )
-            
             return plan
             
         except Exception as e:

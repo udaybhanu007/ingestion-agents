@@ -763,10 +763,10 @@ class BoxConnector:
     def get_file_content(self, file_id: str) -> Optional[str]:
         """
         Get file content as string directly from Box without saving to disk.
+        Uses pypdf for PDF files.
         
         Args:
             file_id (str): Box file ID
-            
         Returns:
             Optional[str]: File content as string, None if error
         """
@@ -774,19 +774,30 @@ class BoxConnector:
             if not self.client:
                 self.logger.error("Not authenticated")
                 return None
-            
             file_obj = self.client.file(file_id)
+            file_info = file_obj.get()
+            file_name = file_info.name if hasattr(file_info, 'name') else ''
             file_content = file_obj.content()
-            
-            # Convert bytes to string with error handling
+            # Check for PDF extension
+            if file_name.lower().endswith('.pdf'):
+                try:
+                    from io import BytesIO
+                    from pypdf import PdfReader
+                    pdf_stream = BytesIO(file_content)
+                    reader = PdfReader(pdf_stream)
+                    text = "\n".join(page.extract_text() or "" for page in reader.pages)
+                    self.logger.info(f"Extracted text from PDF file {file_id} ({len(text)} characters)")
+                    return text
+                except Exception as e:
+                    self.logger.error(f"PDF extraction failed for file {file_id}: {e}")
+                    return None
+            # Non-PDF: decode as text
             if isinstance(file_content, bytes):
                 content_str = file_content.decode('utf-8', errors='ignore')
             else:
                 content_str = str(file_content)
-            
             self.logger.info(f"Retrieved content for file {file_id} ({len(content_str)} characters)")
             return content_str
-            
         except Exception as e:
             self.logger.error(f"Error getting content for file {file_id}: {e}")
             return None

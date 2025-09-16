@@ -681,11 +681,14 @@ Please respond with a JSON object containing:
         
         plan = create_ingestion_plan_schema(plan_id, steps)
         
+        print(json.dumps(plan, indent=2))
+
         # Validate plan
         if not validate_json_plan(plan):
             self.logger.error(f"Generated invalid plan for {doc_uri}")
             raise ValueError("Generated plan does not follow required schema")
         
+
         # Log plan details to console
         self._log_ingestion_plan(plan, doc_uri)
         

@@ -254,6 +254,8 @@ class ReActLogger:
     def __init__(self, logger: structlog.stdlib.BoundLogger, execution_id: str = None):
         self.logger = logger
         self.execution_id = execution_id or self._generate_execution_id()
+        # Initialize fallback logger for when structured logging fails
+        self._fallback_logger = logging.getLogger(f"react.{self.execution_id}")
     
     def _generate_execution_id(self) -> str:
         """Generate a unique execution ID."""
@@ -308,10 +310,22 @@ class ReActLogger:
         
         if success:
             log_data['result'] = result
-            self.logger.info("Agent observation", **log_data, **kwargs)
+            try:
+                self.logger.info("Agent observation", **log_data, **kwargs)
+            except Exception as e:
+                # Fallback to standard logging if structured logging fails
+                print(f"Structured logging failed for observation: {e}")
+                if hasattr(self, '_fallback_logger'):
+                    self._fallback_logger.info(f"Agent observation: {log_data}")
         else:
-            log_data['error'] = error
-            self.logger.error("Agent observation failed", **log_data, **kwargs)
+            log_data['error'] = error if error is not None else "Unknown error"
+            try:
+                self.logger.error("Agent observation failed", **log_data, **kwargs)
+            except Exception as e:
+                # Fallback to standard logging if structured logging fails
+                print(f"Structured logging failed for observation error: {e}")
+                if hasattr(self, '_fallback_logger'):
+                    self._fallback_logger.error(f"Agent observation failed: {log_data}")
     
     def error(self, error: Exception, context: Dict[str, Any] = None, **kwargs):
         """Log error with full context."""

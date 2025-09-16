@@ -9,6 +9,7 @@ import logging
 import json
 import hashlib
 import re
+import uuid
 from typing import Dict, List, Any, Optional, Union
 from datetime import datetime, timezone
 from pathlib import Path
@@ -439,62 +440,68 @@ def extract_metadata_from_uri(doc_uri: str) -> Dict[str, str]:
     return metadata
 
 
-def validate_json_plan(plan: Dict[str, Any]) -> bool:
+def validate_json_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
     """Validate that a plan follows the correct JSON schema."""
-    required_fields = ['steps']
+    errors = []
+    required_fields = ['plan_id', 'steps']
     
     # Check required top-level fields
     for field in required_fields:
         if field not in plan:
-            logging.error(f"Missing required: {field}")
-            return False
+            errors.append(f"Missing required field: {field}")
     
-    # Validate plan_id is a valid UUID
-    try:
-        uuid.UUID(plan['plan_id'])
-    except ValueError:
-        logging.error("Invalid plan_id: must be a valid UUID")
-        return False
+    # Validate plan_id is a valid UUID if present
+    if 'plan_id' in plan:
+        try:
+            uuid.UUID(plan['plan_id'])
+        except (ValueError, TypeError):
+            errors.append("Invalid plan_id: must be a valid UUID")
     
-    # Validate steps
-    if not isinstance(plan['steps'], list) or len(plan['steps']) == 0:
-        logging.error("Steps must be a non-empty list")
-        return False
+    # Validate steps if present
+    if 'steps' in plan:
+        if not isinstance(plan['steps'], list):
+            errors.append("Steps must be a list")
+        elif len(plan['steps']) == 0:
+            errors.append("Steps must be a non-empty list")
+        else:
+            for i, step in enumerate(plan['steps']):
+                step_errors = validate_step(step, i)
+                if step_errors:
+                    errors.extend(step_errors)
     
-    for i, step in enumerate(plan['steps']):
-        if not validate_step(step, i):
-            return False
-    
-    return True
+    return {
+        'valid': len(errors) == 0,
+        'errors': errors
+    }
 
 
-def validate_step(step: Dict[str, Any], step_index: int) -> bool:
+def validate_step(step: Dict[str, Any], step_index: int) -> List[str]:
     """Validate a single step in the plan."""
+    errors = []
     required_step_fields = ['task_id', 'tool', 'args', 'depends_on']
     valid_tools = ['vector_ingestion', 'graph_ingestion']
     
     # Check required step fields
     for field in required_step_fields:
         if field not in step:
-            logging.error(f"Step {step_index}: Missing required field: {field}")
-            return False
+            errors.append(f"Step {step_index}: Missing required field: {field}")
     
-    # Validate tool
-    if step['tool'] not in valid_tools:
-        logging.error(f"Step {step_index}: Invalid tool '{step['tool']}'. Must be one of: {valid_tools}")
-        return False
+    # Validate tool if present
+    if 'tool' in step and step['tool'] not in valid_tools:
+        errors.append(f"Step {step_index}: Invalid tool '{step['tool']}'. Must be one of: {valid_tools}")
     
-    # Validate args contains doc_uri
-    if not isinstance(step['args'], dict) or 'doc_uri' not in step['args']:
-        logging.error(f"Step {step_index}: args must contain 'doc_uri'")
-        return False
+    # Validate args contains doc_uri if present
+    if 'args' in step:
+        if not isinstance(step['args'], dict):
+            errors.append(f"Step {step_index}: args must be a dictionary")
+        elif 'doc_uri' not in step['args']:
+            errors.append(f"Step {step_index}: args must contain 'doc_uri'")
     
-    # Validate depends_on is a list
-    if not isinstance(step['depends_on'], list):
-        logging.error(f"Step {step_index}: depends_on must be a list")
-        return False
+    # Validate depends_on is a list if present
+    if 'depends_on' in step and not isinstance(step['depends_on'], list):
+        errors.append(f"Step {step_index}: depends_on must be a list")
     
-    return True
+    return errors
 
 
 def format_classification_result(classification: str, confidence: float, 
@@ -517,8 +524,34 @@ def create_ingestion_plan_schema(plan_id: str, steps: List[Dict[str, Any]]) -> D
     }
 
 
+def get_ingestion_plan_schema_example() -> str:
+    """Get an example schema for the ingestion plan in JSON format."""
+    example_schema = {
+        "plan_id": "uuid-string",
+        "steps": [
+            {
+                "task_id": "1",
+                "tool": "vector_ingestion",
+                "args": {
+                    "doc_uri": "document_uri"
+                },
+                "depends_on": []
+            },
+            {
+                "task_id": "2", 
+                "tool": "graph_ingestion",
+                "args": {
+                    "doc_uri": "document_uri"
+                },
+                "depends_on": ["1"]
+            }
+        ]
+    }
+    return json.dumps(example_schema, indent=2)
+
+
 def create_ingestion_step(task_id: str, tool: str, doc_uri: str, 
-                         depends_on: Optional[List[str]] = None, content: Optional[str] = None) -> Dict[str, Any]:
+                         depends_on: Optional[List[str]] = None) -> Dict[str, Any]:
     """Create a single ingestion step following the required schema."""
     if depends_on is None:
         depends_on = []
@@ -526,10 +559,6 @@ def create_ingestion_step(task_id: str, tool: str, doc_uri: str,
     args = {
         "doc_uri": doc_uri
     }
-    
-    # Add content to args if provided
-    if content is not None:
-        args["content"] = content
     
     return {
         "task_id": task_id,

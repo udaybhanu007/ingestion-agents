@@ -44,19 +44,12 @@ class AzureConnector:
             self.blob_service_client = None
             return
         
-        # Try different environment files in order of preference
-        env_files_to_try = [env_file, ".env.dev", ".env"]
-        env_file_loaded = None
-        
-        for env_path in env_files_to_try:
-            if os.path.exists(env_path):
-                load_dotenv(env_path)
-                env_file_loaded = env_path
-                self.logger.info(f"Loaded environment from {env_path}")
-                break
-        
-        if not env_file_loaded:
-            self.logger.warning("No environment file found. Trying environment variables.")
+        # Load environment variables from specified file only (no fallback)
+        if os.path.exists(env_file):
+            load_dotenv(env_file)
+            self.logger.info(f"Loaded environment from {env_file}")
+        else:
+            raise FileNotFoundError(f"Required environment file not found: {env_file}")
         
         # Use provided credentials or load from environment
         self.storage_account = storage_account or os.getenv('AZURE_STORAGE_ACCOUNT')
@@ -64,21 +57,22 @@ class AzureConnector:
         self.connection_string = connection_string or os.getenv('AZURE_STORAGE_CONNECTION_STRING')
         
         # Create BlobServiceClient
-        try:
-            if self.connection_string:
-                self.blob_service_client = BlobServiceClient.from_connection_string(self.connection_string)
-                self.logger.info("Initialized Azure connector with connection string")
-            elif self.storage_account and self.account_key:
-                account_url = f"https://{self.storage_account}.blob.core.windows.net"
-                self.blob_service_client = BlobServiceClient(account_url=account_url, credential=self.account_key)
-                self.logger.info(f"Initialized Azure connector for account: {self.storage_account}")
-            else:
-                self.logger.error("Azure Storage credentials not found in environment or parameters")
-                self.blob_service_client = None
-                
-        except Exception as e:
-            self.logger.error(f"Failed to initialize Azure Storage client: {e}")
-            self.blob_service_client = None
+        if self.connection_string:
+            self.blob_service_client = BlobServiceClient.from_connection_string(self.connection_string)
+            self.logger.info("Initialized Azure connector with connection string")
+        elif self.storage_account and self.account_key:
+            account_url = f"https://{self.storage_account}.blob.core.windows.net"
+            self.blob_service_client = BlobServiceClient(account_url=account_url, credential=self.account_key)
+            self.logger.info(f"Initialized Azure connector for account: {self.storage_account}")
+        else:
+            missing = []
+            if not self.connection_string:
+                missing.append('AZURE_STORAGE_CONNECTION_STRING')
+            if not self.storage_account:
+                missing.append('AZURE_STORAGE_ACCOUNT')
+            if not self.account_key:
+                missing.append('AZURE_STORAGE_ACCOUNT_KEY')
+            raise ValueError(f"Missing required Azure Storage credentials: {', '.join(missing)}")
     
     def is_available(self) -> bool:
         """Check if Azure connector is available and configured."""

@@ -16,7 +16,14 @@ from datetime import datetime
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 # Import ingestion tools
-from agents.tools.tool_registry import get_tool_registry
+try:
+    # Import using tool registry only
+    from agents.tools.tool_registry import get_tool_registry
+    TOOLS_AVAILABLE = True
+except ImportError as e:
+    print(f"Agent ingestion tools import failed: {e}")
+    get_tool_registry = None
+    TOOLS_AVAILABLE = False
 
 # Import simple logging
 from config.simple_logger import get_agent_logger, get_react_logger
@@ -34,10 +41,14 @@ class ExecutionAgent:
         self.react_logger = None  # Will be initialized per execution
         
         # Initialize tool registry
-        self.tool_registry = get_tool_registry()
-        self.logger.info("Tool registry initialized successfully")
+        if TOOLS_AVAILABLE:
+            self.tool_registry = get_tool_registry()
+            self.logger.info("Tool registry initialized successfully")
+        else:
+            self.tool_registry = None
+            self.logger.error("Tool registry initialization failed")
         
-        self.logger.info("ExecutionAgent initialized")
+        self.logger.info(f"ExecutionAgent initialized - Tools: {TOOLS_AVAILABLE}")
     
     async def execute_plan_async(self, plan: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
@@ -140,6 +151,14 @@ class ExecutionAgent:
         step_id = step.get('step_id', 'unknown')
         
         self.logger.info(f"Executing step: {step_id} (type: {step_type})")
+        
+        if not self.tool_registry:
+            self.logger.error("Tool registry not available")
+            return {
+                'success': False,
+                'error': 'Tool registry not available',
+                'step_id': step_id
+            }
         
         try:
             # Get appropriate tool for step type

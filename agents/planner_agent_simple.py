@@ -22,7 +22,12 @@ parent_dir = os.path.dirname(current_dir)
 sys.path.insert(0, parent_dir)
 
 # Azure OpenAI imports
-from openai import AzureOpenAI
+try:
+    from openai import AzureOpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    AzureOpenAI = None
 
 from dotenv import load_dotenv
 
@@ -36,7 +41,7 @@ from utils.common_function import (
     generate_uuid, clean_text, extract_entities,
     analyze_document_structure, extract_metadata_from_uri,
     validate_json_plan, save_json, create_ingestion_plan_schema,
-    get_ingestion_plan_schema_example, create_ingestion_step, format_classification_result
+    create_ingestion_step, format_classification_result
 )
 
 # Import simple logging
@@ -74,41 +79,53 @@ class PlannerAgent:
         # Load guidelines
         self.guidelines = self._load_guidelines()
         
-        self.logger.info("PlannerAgent initialized with Azure OpenAI")
+        self.logger.info(f"PlannerAgent initialized - OpenAI: {OPENAI_AVAILABLE}")
     
     def _load_environment(self, env_file: str):
-        """Load environment variables from specified file only (no fallback)."""
-        if os.path.exists(env_file):
-            load_dotenv(env_file)
-            self.logger.info(f"Environment file loaded: {env_file}")
-        else:
-            raise FileNotFoundError(f"Required environment file not found: {env_file}")
+        """Load environment variables from file."""
+        env_files_to_try = [env_file, ".env.dev", ".env"]
+        env_file_loaded = None
+        
+        for env_path in env_files_to_try:
+            if os.path.exists(env_path):
+                load_dotenv(env_path)
+                env_file_loaded = env_path
+                self.logger.info(f"Environment file loaded: {env_path}")
+                break
+        
+        if not env_file_loaded:
+            self.logger.warning("No environment file found, using system environment")
     
     def _initialize_llm(self):
         """Initialize Azure OpenAI client."""
-        # Get Azure OpenAI credentials from environment
-        api_key = os.getenv('AZURE_OPENAI_API_KEY')
-        endpoint = os.getenv('AZURE_OPENAI_ENDPOINT')
-        api_version = os.getenv('AZURE_OPENAI_API_VERSION')
+        if not OPENAI_AVAILABLE:
+            self.logger.error("OpenAI package not available. Please install: pip install openai")
+            self.azure_openai = None
+            return
         
-        if not all([api_key, endpoint, api_version]):
-            missing = []
-            if not api_key:
-                missing.append('AZURE_OPENAI_API_KEY')
-            if not endpoint:
-                missing.append('AZURE_OPENAI_ENDPOINT')
-            if not api_version:
-                missing.append('AZURE_OPENAI_API_VERSION')
-            raise ValueError(f"Missing required Azure OpenAI environment variables: {', '.join(missing)}")
-        
-        # Initialize Azure OpenAI client
-        self.azure_openai = AzureOpenAI(
-            api_key=api_key,
-            azure_endpoint=endpoint,
-            api_version=api_version
-        )
-        
-        self.logger.info("Azure OpenAI client initialized successfully")
+        try:
+            # Get Azure OpenAI credentials from environment
+            api_key = os.getenv('AZURE_OPENAI_API_KEY')
+            endpoint = os.getenv('AZURE_OPENAI_ENDPOINT')
+            api_version = os.getenv('AZURE_OPENAI_API_VERSION', '2024-02-15-preview')
+            
+            if not all([api_key, endpoint]):
+                self.logger.error("Azure OpenAI credentials not found in environment variables")
+                self.azure_openai = None
+                return
+            
+            # Initialize Azure OpenAI client
+            self.azure_openai = AzureOpenAI(
+                api_key=api_key,
+                azure_endpoint=endpoint,
+                api_version=api_version
+            )
+            
+            self.logger.info("Azure OpenAI client initialized successfully")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to initialize Azure OpenAI: {e}")
+            self.azure_openai = None
     
     def _load_guidelines(self) -> str:
         """Load processing guidelines from doc/guidelines.md."""
@@ -192,20 +209,15 @@ class PlannerAgent:
             
             # Get document content
             try:
-                content = await connector.get_document_content(doc_uri)
-                if content and 'content' in content:
-                    content_text = content['content']
-                    self.react_logger.observation(
-                        f"Retrieved document content, length: {len(content_text)} characters"
-                    )
-                else:
-                    content_text = ""
-                    self.react_logger.observation("Document retrieval returned empty content")
+                content = await connector.get_content_async(doc_uri)
+                self.react_logger.observation(
+                    f"Retrieved document content, length: {len(content)} characters"
+                )
             except Exception as e:
                 self.logger.error(f"Failed to retrieve document content: {e}")
                 self.react_logger.observation(f"Document retrieval failed: {e}")
                 # Continue with empty content
-                content_text = ""
+                content = ""
             
             # Extract document metadata
             try:
@@ -222,7 +234,7 @@ class PlannerAgent:
             
             # Analyze document structure  
             try:
-                structure_analysis = analyze_document_structure(content_text)
+                structure_analysis = analyze_document_structure(content)
                 self.react_logger.observation(
                     f"Document structure analysis: {structure_analysis}"
                 )
@@ -232,7 +244,7 @@ class PlannerAgent:
             
             # Extract entities
             try:
-                entities = extract_entities(content_text)
+                entities = extract_entities(content)
                 self.react_logger.observation(
                     f"Extracted {len(entities)} entities from document"
                 )
@@ -269,12 +281,16 @@ class PlannerAgent:
             if self.react_logger:
                 self.react_logger.observation(f"Plan creation failed: {e}")
             
-            # Return a simple error plan instead of fallback
-            raise Exception(f"Error creating ingestion plan: {e}")
+            # Return a fallback plan
+            return self._create_fallback_plan(doc_uri, metadata)
     
     async def _create_plan_with_llm(self, doc_uri: str, content: str, metadata: Dict, 
                                   structure_analysis: Dict, entities: List) -> Dict[str, Any]:
         """Create ingestion plan using Azure OpenAI LLM."""
+        
+        if not self.azure_openai:
+            self.logger.warning("Azure OpenAI not available, creating basic plan")
+            return self._create_fallback_plan(doc_uri, metadata)
         
         try:
             # Prepare prompt
@@ -284,106 +300,34 @@ class PlannerAgent:
             
             self.react_logger.action("Sending classification request to Azure OpenAI")
             
-            # Make LLM call - Use deployment name, not model name for Azure OpenAI
-            deployment_name = os.getenv('AZURE_OPENAI_DEPLOYMENT')
-            if not deployment_name:
-                raise ValueError("AZURE_OPENAI_DEPLOYMENT environment variable is required")
-                
-            self.logger.info(f"Making Azure OpenAI call with deployment: {deployment_name}")
-            self.logger.info(f"Azure OpenAI endpoint: {os.getenv('AZURE_OPENAI_ENDPOINT', 'NOT_SET')}")
-            self.logger.info(f"Azure OpenAI API version: {os.getenv('AZURE_OPENAI_API_VERSION', 'NOT_SET')}")
-            
-            # Test Azure OpenAI connection with a simple call first
-            try:
-                test_response = self.azure_openai.chat.completions.create(
-                    model=deployment_name,
-                    messages=[{"role": "user", "content": "Say 'test'"}],
-                    max_tokens=10,
-                    temperature=0
-                )
-                test_content = test_response.choices[0].message.content
-                self.logger.info(f"Azure OpenAI connection test successful: {test_content}")
-            except Exception as test_e:
-                self.logger.error(f"Azure OpenAI connection test failed: {test_e}")
-                raise Exception(f"Azure OpenAI connection failed: {test_e}")
-            
-            # Log prompt for debugging
-            self.logger.debug(f"Sending prompt to LLM (length: {len(prompt)})")
-            
+            # Make LLM call
             response = self.azure_openai.chat.completions.create(
-                model=deployment_name,
+                model=os.getenv('AZURE_OPENAI_MODEL_NAME', 'gpt-4'),
                 messages=[
-                    {"role": "system", "content": "You are an expert document classifier and ingestion planner. Always respond with valid JSON."},
+                    {"role": "system", "content": "You are an expert document classifier and ingestion planner."},
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=2000,
                 temperature=0.1
             )
-
+            
             response_text = response.choices[0].message.content
-            self.logger.info(f"Received LLM response, length: {len(response_text) if response_text else 0}")
-            self.react_logger.observation(f"Received LLM response, length: {len(response_text) if response_text else 0}")
+            self.react_logger.observation(f"Received LLM response, length: {len(response_text)}")
             
-            # Log the full response object for debugging
-            self.logger.debug(f"Full response object: {response}")
-            
-            # Check if response is empty
-            if not response_text or response_text.strip() == "":
-                self.logger.error("LLM returned empty response")
-                self.logger.error(f"Response object: {response}")
-                self.react_logger.observation("LLM returned empty response")
-                raise Exception("LLM returned empty response")
-            
-            # Log the actual response for debugging
-            self.logger.debug(f"LLM response content: {response_text}")
-
-            # Extract JSON from markdown code blocks if present
-            clean_response = self._extract_json_from_response(response_text)
-            self.logger.debug(f"Cleaned response: {clean_response}")
-
             # Parse JSON response
             try:
-                plan = json.loads(clean_response)
+                plan = json.loads(response_text)
                 self.react_logger.observation("Successfully parsed LLM response as JSON")
                 return plan
             except json.JSONDecodeError as e:
                 self.logger.error(f"Failed to parse LLM response as JSON: {e}")
-                self.logger.error(f"Response content: '{response_text}'")
-                self.logger.error(f"Cleaned content: '{clean_response}'")
                 self.react_logger.observation(f"JSON parsing failed: {e}")
-                raise Exception(f"Invalid JSON response from LLM: {e}")
+                return self._create_fallback_plan(doc_uri, metadata)
                 
         except Exception as e:
             self.logger.error(f"LLM classification failed: {e}")
             self.react_logger.observation(f"LLM classification failed: {e}")
-            raise Exception(f"LLM plan creation failed: {e}")
-    
-    def _extract_json_from_response(self, response_text: str) -> str:
-        """Extract JSON content from markdown code blocks or return as-is."""
-        if not response_text:
-            return response_text
-            
-        # Remove leading/trailing whitespace
-        response_text = response_text.strip()
-        
-        # Check if response is wrapped in markdown code blocks
-        if response_text.startswith('```json'):
-            # Extract content between ```json and ```
-            start = response_text.find('```json') + 7  # 7 = len('```json')
-            end = response_text.find('```', start)
-            if end != -1:
-                json_content = response_text[start:end].strip()
-                return json_content
-        elif response_text.startswith('```'):
-            # Extract content between ``` and ```
-            start = response_text.find('```') + 3
-            end = response_text.find('```', start)
-            if end != -1:
-                json_content = response_text[start:end].strip()
-                return json_content
-        
-        # If no markdown blocks found, return original response
-        return response_text
+            return self._create_fallback_plan(doc_uri, metadata)
     
     def _build_classification_prompt(self, doc_uri: str, content: str, metadata: Dict,
                                    structure_analysis: Dict, entities: List) -> str:
@@ -410,72 +354,86 @@ class PlannerAgent:
         Guidelines:
         {self.guidelines}
         
-        Based on your analysis, classify the document as:
-        - VECTOR_STORE_ONLY: Use "vector_ingestion" tool (single step with task_id "1")
-        - KNOWLEDGE_GRAPH_ONLY: Use "graph_ingestion" tool (single step with task_id "1")  
-        - DUAL_INGESTION: Use both tools (two steps: task_id "1" for vector_ingestion, task_id "2" for graph_ingestion with depends_on ["1"])
-        
         Create a JSON ingestion plan with this schema:
-        {get_ingestion_plan_schema_example()}
+        {create_ingestion_plan_schema()}
         
-        Examples:
-        
-        For VECTOR_STORE_ONLY:
-        {{
-          "plan_id": "uuid",
-          "steps": [
-            {{
-              "task_id": "1",
-              "tool": "vector_ingestion",
-              "args": {{ "doc_uri": "{doc_uri}" }},
-              "depends_on": []
-            }}
-          ]
-        }}
-        
-        For KNOWLEDGE_GRAPH_ONLY:
-        {{
-          "plan_id": "uuid",
-          "steps": [
-            {{
-              "task_id": "1",
-              "tool": "graph_ingestion",
-              "args": {{ "doc_uri": "{doc_uri}" }},
-              "depends_on": []
-            }}
-          ]
-        }}
-        
-        For DUAL_INGESTION:
-        {{
-          "plan_id": "uuid", 
-          "steps": [
-            {{
-              "task_id": "1",
-              "tool": "vector_ingestion",
-              "args": {{ "doc_uri": "{doc_uri}" }},
-              "depends_on": []
-            }},
-            {{
-              "task_id": "2",
-              "tool": "graph_ingestion", 
-              "args": {{ "doc_uri": "{doc_uri}" }},
-              "depends_on": ["1"]
-            }}
-          ]
-        }}
-        
-        Important: 
-        - Use EXACTLY "vector_ingestion" or "graph_ingestion" as tool names (no other tool names allowed)
-        - For DUAL_INGESTION, create TWO separate steps: task_id "1" for vector_ingestion, task_id "2" for graph_ingestion  
-        - graph_ingestion must depend on vector_ingestion (depends_on: ["1"])
-        - Do NOT include document content in the args
-        - Only include doc_uri in the args
-        - Use simple task_id values: "1", "2", etc.
-        - Return only valid JSON without any explanation or markdown formatting
+        Classify the document and determine appropriate processing steps.
+        Return only valid JSON.
         """
         
         return prompt
     
+    def _create_fallback_plan(self, doc_uri: str, metadata: Dict) -> Dict[str, Any]:
+        """Create a basic fallback ingestion plan."""
+        plan_id = generate_uuid()
+        
+        # Determine document type
+        doc_type = metadata.get('document_type', 'unknown')
+        
+        # Create basic steps
+        steps = []
+        
+        # Step 1: Content extraction
+        steps.append(create_ingestion_step(
+            step_id=f"extract-{generate_uuid()[:8]}",
+            step_type="content_extraction",
+            description=f"Extract content from {doc_type} document",
+            config={
+                "extraction_method": "default",
+                "preserve_formatting": True
+            }
+        ))
+        
+        # Step 2: Text chunking
+        chunk_size = metadata.get('processing_options', {}).get('chunk_size', 1024)
+        steps.append(create_ingestion_step(
+            step_id=f"chunk-{generate_uuid()[:8]}",
+            step_type="text_chunking", 
+            description="Split document into semantic chunks",
+            config={
+                "chunk_size": chunk_size,
+                "overlap": 200,
+                "method": "semantic"
+            }
+        ))
+        
+        # Step 3: Vector generation
+        steps.append(create_ingestion_step(
+            step_id=f"vector-{generate_uuid()[:8]}",
+            step_type="vector_generation",
+            description="Generate embeddings for document chunks",
+            config={
+                "embedding_model": "text-embedding-ada-002",
+                "batch_size": 100
+            }
+        ))
+        
+        # Create plan
+        plan = {
+            "plan_id": plan_id,
+            "document_uri": doc_uri,
+            "document_classification": {
+                "primary_type": doc_type,
+                "content_structure": "unknown",
+                "estimated_complexity": "medium",
+                "confidence_score": 0.5
+            },
+            "processing_strategy": "default",
+            "steps": steps,
+            "estimated_duration": len(steps) * 30,
+            "resource_requirements": {
+                "memory_mb": 512,
+                "cpu_cores": 1,
+                "storage_mb": 100
+            },
+            "metadata": metadata,
+            "created_at": datetime.utcnow().isoformat(),
+            "created_by": "planner_agent_fallback"
+        }
+        
+        self.logger.info(f"Created fallback plan with {len(steps)} steps")
+        return plan
+
+
 # Export the class
 __all__ = ['PlannerAgent']

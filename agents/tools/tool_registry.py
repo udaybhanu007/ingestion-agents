@@ -42,11 +42,11 @@ class ToolRegistry:
     def _register_tool_classes(self):
         """Register available tool classes."""
         try:
-            from agents.tools.vector_tool import VectorTool
-            self.tool_classes['vector_ingestion'] = VectorTool
-            self.logger.info("Registered VectorTool")
+            from agents.tools.vector_toolv2 import VectorToolV2
+            self.tool_classes['vector_ingestion'] = VectorToolV2
+            self.logger.info("Registered VectorToolV2")
         except ImportError as e:
-            self.logger.warning(f"Failed to register VectorTool: {e}")
+            self.logger.warning(f"Failed to register VectorToolV2: {e}")
         
         try:
             from agents.tools.graph_tool import GraphIngestionTool

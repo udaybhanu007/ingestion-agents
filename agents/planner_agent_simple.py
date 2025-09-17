@@ -211,7 +211,7 @@ class PlannerAgent:
             try:
                 content = await connector.get_content_async(doc_uri)
                 self.react_logger.observation(
-                    f"Retrieved document content, length: {len(content)} characters"
+                    f"Retrieved document content, length: {len(content) if content else 0} characters"
                 )
             except Exception as e:
                 self.logger.error(f"Failed to retrieve document content: {e}")
@@ -312,7 +312,7 @@ class PlannerAgent:
             )
             
             response_text = response.choices[0].message.content
-            self.react_logger.observation(f"Received LLM response, length: {len(response_text)}")
+            self.react_logger.observation(f"Received LLM response, length: {len(response_text) if response_text else 0}")
             
             # Parse JSON response
             try:
@@ -335,7 +335,7 @@ class PlannerAgent:
         
         # Truncate content if too long
         max_content_length = 3000
-        if len(content) > max_content_length:
+        if content and len(content) > max_content_length:
             content = content[:max_content_length] + "... [truncated]"
         
         prompt = f"""

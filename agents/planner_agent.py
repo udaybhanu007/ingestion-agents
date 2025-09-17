@@ -196,7 +196,7 @@ class PlannerAgent:
                 if content and 'content' in content:
                     content_text = content['content']
                     self.react_logger.observation(
-                        f"Retrieved document content, length: {len(content_text)} characters"
+                        f"Retrieved document content, length: {len(content_text) if content_text else 0} characters"
                     )
                 else:
                     content_text = ""
@@ -234,7 +234,7 @@ class PlannerAgent:
             try:
                 entities = extract_entities(content_text)
                 self.react_logger.observation(
-                    f"Extracted {len(entities)} entities from document"
+                    f"Extracted {len(entities) if entities else 0} entities from document"
                 )
             except Exception as e:
                 self.logger.error(f"Entity extraction failed: {e}")
@@ -242,7 +242,7 @@ class PlannerAgent:
             
             # Create plan using LLM
             plan = await self._create_plan_with_llm(
-                doc_uri, content, combined_metadata, structure_analysis, entities
+                doc_uri, content_text, combined_metadata, structure_analysis, entities
             )
             # Always set a valid UUID for plan_id
             plan['plan_id'] = generate_uuid()
@@ -323,7 +323,7 @@ class PlannerAgent:
                 raise Exception(f"Azure OpenAI connection failed: {test_e}")
             
             # Log prompt for debugging
-            self.logger.debug(f"Sending prompt to LLM (length: {len(prompt)})")
+            self.logger.debug(f"Sending prompt to LLM (length: {len(prompt) if prompt else 0})")
             
             response = self.azure_openai.chat.completions.create(
                 model=deployment_name,
@@ -404,9 +404,11 @@ class PlannerAgent:
                                    structure_analysis: Dict, entities: List) -> str:
         """Build prompt for document classification."""
         
-        # Truncate content if too long
+        # Handle None content and truncate if too long
+        if content is None:
+            content = ""
         max_content_length = 3000
-        if len(content) > max_content_length:
+        if content and len(content) > max_content_length:
             content = content[:max_content_length] + "... [truncated]"
         
         prompt = f"""

@@ -183,7 +183,7 @@ class ExecutionAgent:
                 }
             
             # Extract content using tool
-            doc_uri = plan.get('document_uri', '')
+            doc_uri = plan.get('doc_uri', '')
             config = step.get('config', {})
             
             result = await tool.extract_content_async(doc_uri, config)
@@ -390,6 +390,9 @@ class ExecutionAgent:
             args = step.get('args', {})
             doc_uri = args.get('doc_uri', plan.get('doc_uri', ''))
             
+            # Get document content from plan context
+            content = plan.get('context', {}).get('content', '')
+            
             if not doc_uri:
                 return {
                     'success': False,
@@ -405,7 +408,7 @@ class ExecutionAgent:
                 'doc_uri': doc_uri
             }
             
-            result = tool.ingest_content("", doc_uri, "document", metadata)  # Use sync ingest_content method
+            result = tool.ingest_content(content, metadata)  # Use sync ingest_content method
             
             return {
                 'success': result.get('success', False),

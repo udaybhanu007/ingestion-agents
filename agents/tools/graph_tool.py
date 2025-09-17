@@ -1,13 +1,5 @@
 """
-Root Cause Analysis and Fixes for Neo4j MCP Server Integration Issues
-
-IDENTIFIED ROOT CAUSES:
-1. Parameter Structure Mismatch: The tools expect specific parameter formats
-2. Tool Name Mismatch: Some tool names may not match exactly
-3. Data Model Structure: The data model structure doesn't match Neo4j MCP expectations
-4. Server Response Parsing: SSE parsing may be interfering with JSON responses
-
-FIXES APPLIED:
+Neo4j Graph Ingestion Tool using MCP Servers
 """
 
 import logging
@@ -16,9 +8,7 @@ import sys
 import os
 import requests
 import re
-import math
-import time
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional
 from langchain_openai import AzureChatOpenAI
 from pydantic import SecretStr
 
@@ -29,19 +19,14 @@ if parent_dir not in sys.path:
 
 try:
     from config.config_manager import get_config
+    from config.logger_config import get_tool_logger
     config_manager = get_config()
-    def get_graph_config():
-        return config_manager
+    logger = get_tool_logger("graph_tool")
 except ImportError:
-    # Fallback config
+    # Fallback config for development
     class MockConfig:
         def get_config(self, section, key=None):
             configs = {
-                "neo4j": {
-                    "uri": "bolt://localhost:7687",
-                    "username": "neo4j",
-                    "password": "password"
-                },
                 "openai": {
                     "deployment_name": os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini"),
                     "azure_api_version": os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview"),
@@ -49,40 +34,24 @@ except ImportError:
                     "azure_api_key": os.getenv("AZURE_OPENAI_API_KEY", "")
                 }
             }
-            if key:
-                return configs.get(section, {}).get(key)
-            return configs.get(section, {})
+            return configs.get(section, {}).get(key) if key else configs.get(section, {})
         
         @property
         def max_content_length(self):
             return 50000
     
-    def get_graph_config():
-        return MockConfig()
-
-# Import structured logging
-try:
-    from config.logger_config import get_tool_logger
-    STRUCTURED_LOGGING_AVAILABLE = True
-except ImportError:
-    STRUCTURED_LOGGING_AVAILABLE = False
-
-logger = logging.getLogger(__name__)
+    config_manager = MockConfig()
+    logger = logging.getLogger(__name__)
 
 
 class GraphIngestionTool:
-    """Fixed tool for ingesting content into Neo4j graph database using MCP."""
+    """Tool for ingesting content into Neo4j graph database using MCP servers."""
     
     def __init__(self):
-        self.config = get_graph_config()
+        self.config = config_manager
+        self.logger = logger
         
-        # Initialize structured logging
-        if STRUCTURED_LOGGING_AVAILABLE:
-            self.logger = get_tool_logger("graph_tool")
-        else:
-            self.logger = logging.getLogger(__name__)
-        
-        # Initialize Azure OpenAI client using correct config structure
+        # Initialize Azure OpenAI client
         openai_config = self.config.get_config('openai')
         self.llm = AzureChatOpenAI(
             azure_deployment=openai_config.get('deployment_name'),
@@ -91,11 +60,9 @@ class GraphIngestionTool:
             api_key=SecretStr(openai_config.get('azure_api_key', ''))
         )
         
-        # MCP server configurations - using working dual server approach
+        # MCP server configurations
         self.cypher_server_url = "http://127.0.0.1:8003/mcp/"
         self.data_modeling_server_url = "http://127.0.0.1:8004/mcp/" 
-        
-        self.logger.info(f"GraphIngestionTool initialized - cypher_server: {self.cypher_server_url}, data_modeling_server: {self.data_modeling_server_url}")
         
         # Track processing state
         self.processing_stats = {
@@ -106,7 +73,7 @@ class GraphIngestionTool:
             "errors": []
         }
         
-        self.logger.info("GraphIngestionTool initialized with dual MCP server configuration")
+        self.logger.info("GraphIngestionTool initialized")
 
     def initialize_servers(self, timeout: int = 5) -> bool:
         """Check that the configured MCP servers are reachable.
@@ -146,7 +113,7 @@ class GraphIngestionTool:
     # [Previous methods remain the same until make_mcp_request...]
 
     def parse_sse_response(self, response_text: str) -> Dict[str, Any]:
-        """Parse Server-Sent Events response format."""
+        """Parse Server-Sent Events response format from MCP servers."""
         try:
             # Split by lines and find data lines
             lines = response_text.strip().split('\n')
@@ -157,26 +124,45 @@ class GraphIngestionTool:
                     if json_str.strip() == '[DONE]':
                         continue
                     try:
-                        return json.loads(json_str)
-                    except json.JSONDecodeError:
+                        parsed_data = json.loads(json_str)
+                        self.logger.debug(f"Parsed SSE data: {parsed_data}")
+                        
+                        # Handle MCP JSON-RPC response format from SSE
+                        if "result" in parsed_data:
+                            return {"success": True, "result": parsed_data["result"]}
+                        elif "error" in parsed_data:
+                            error_details = parsed_data["error"]
+                            error_msg = f"MCP Error {error_details.get('code', 'unknown')}: {error_details.get('message', 'No message')}"
+                            return {"success": False, "error": error_msg}
+                        else:
+                            return {"success": True, "result": parsed_data}
+                            
+                    except json.JSONDecodeError as jde:
+                        self.logger.debug(f"Failed to parse SSE JSON: {jde}")
                         continue
             
             # If no valid SSE format found, try parsing as direct JSON
-            return json.loads(response_text)
+            try:
+                parsed_data = json.loads(response_text)
+                if "result" in parsed_data:
+                    return {"success": True, "result": parsed_data["result"]}
+                elif "error" in parsed_data:
+                    error_details = parsed_data["error"]
+                    error_msg = f"MCP Error {error_details.get('code', 'unknown')}: {error_details.get('message', 'No message')}"
+                    return {"success": False, "error": error_msg}
+                else:
+                    return {"success": True, "result": parsed_data}
+            except json.JSONDecodeError:
+                pass
+            
+            return {"success": False, "error": f"Failed to parse response: {response_text[:200]}"}
             
         except Exception as e:
             self.logger.error(f"Error parsing SSE response: {e}")
-            return {"error": f"Failed to parse response: {str(e)}"}
+            return {"success": False, "error": f"Failed to parse response: {str(e)}"}
 
     def make_mcp_request(self, server_url: str, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Fixed MCP request method with proper error handling and response parsing.
-        
-        FIXES:
-        1. Better error handling for different response types
-        2. Proper JSON parsing without SSE interference
-        3. More detailed logging for debugging
-        """
+        """Make MCP request with proper headers and error handling."""
         try:
             payload = {
                 "jsonrpc": "2.0",
@@ -188,73 +174,111 @@ class GraphIngestionTool:
                 }
             }
             
-            self.logger.debug(f"Making MCP request to {server_url} with tool {tool_name}")
+            self.logger.info(f"Making MCP request to {tool_name}")
             self.logger.debug(f"Arguments: {json.dumps(arguments, indent=2)}")
             
-            response = requests.post(
-                server_url,
-                json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "Accept": "application/json, text/event-stream"
-                },
-                timeout=60  # Increased timeout for complex operations
-            )
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+                "User-Agent": "neo4j-graph-tool/1.0"
+            }
+            
+            response = requests.post(server_url, json=payload, headers=headers, timeout=60)
             
             self.logger.debug(f"Response status: {response.status_code}")
-            self.logger.debug(f"Response headers: {dict(response.headers)}")
             
             if response.status_code == 200:
-                # Try direct JSON parsing first
-                try:
-                    json_response = response.json()
-                    self.logger.debug(f"Direct JSON response: {json_response}")
-                    
-                    # Handle MCP JSON-RPC response format
-                    if "result" in json_response:
-                        return {"result": json_response["result"]}
-                    elif "error" in json_response:
-                        error_details = json_response["error"]
-                        return {"error": f"MCP Error {error_details.get('code', 'unknown')}: {error_details.get('message', 'No message')}"}
-                    else:
-                        return json_response
-                        
-                except json.JSONDecodeError:
-                    # Fall back to SSE parsing if direct JSON fails
-                    self.logger.debug("Direct JSON failed, trying SSE parsing")
+                content_type = response.headers.get('content-type', '').lower()
+                
+                if 'text/event-stream' in content_type:
                     return self.parse_sse_response(response.text)
+                else:
+                    try:
+                        json_response = response.json()
+                        if "result" in json_response:
+                            return {"success": True, "result": json_response["result"]}
+                        elif "error" in json_response:
+                            error_details = json_response["error"]
+                            error_msg = f"MCP Error {error_details.get('code', 'unknown')}: {error_details.get('message', 'No message')}"
+                            return {"success": False, "error": error_msg}
+                        else:
+                            return {"success": True, "result": json_response}
+                    except json.JSONDecodeError:
+                        return self.parse_sse_response(response.text)
             else:
                 error_msg = f"HTTP {response.status_code}: {response.text}"
-                self.logger.error(f"MCP request failed: {error_msg}")
-                return {"error": error_msg}
+                self.logger.error(error_msg)
+                return {"success": False, "error": error_msg}
                 
-        except Exception as e:
+        except requests.exceptions.RequestException as e:
             error_msg = f"Request failed: {str(e)}"
-            self.logger.error(f"MCP request error: {error_msg}")
-            return {"error": error_msg}
+            self.logger.error(error_msg)
+            return {"success": False, "error": error_msg}
+        except Exception as e:
+            error_msg = f"Unexpected error: {str(e)}"
+            self.logger.error(error_msg)
+            return {"success": False, "error": error_msg}
 
     def _build_neo4j_data_model(self, entities_relationships: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Fixed data model building method with correct Neo4j MCP structure.
+        FIXED data model building method with correct Neo4j MCP structure.
         
-        FIXES:
-        1. Proper node structure with required fields
-        2. Correct relationship structure format
-        3. Better property type mapping
+        Based on the actual MCP schema, nodes require:
+        - label (string)
+        - key_property (Property object)
+        - properties (array of Property objects)
+        
+        Relationships require:
+        - type (string)
+        - start_node_label (string)  
+        - end_node_label (string)
+        - key_property (optional Property object)
+        - properties (array of Property objects)
         """
         try:
-            nodes = []
-            relationships = []
+            # Use dictionaries to deduplicate by label/type
+            nodes_by_label = {}
+            relationships_by_type = {}
             
-            # Build nodes from entities with proper structure
+            # Build nodes from entities with proper MCP schema structure and deduplication
             for entity in entities_relationships.get("entities", []):
                 entity_type = entity.get("type", "Entity")
                 properties = entity.get("properties", {})
                 
-                # Build node with required structure for Neo4j MCP
-                node_properties = []
+                # Check if we already have a node for this label
+                if entity_type in nodes_by_label:
+                    # Merge properties from this entity into existing node
+                    existing_node = nodes_by_label[entity_type]
+                    existing_prop_names = {prop["name"] for prop in existing_node["properties"]}
+                    
+                    # Add new properties that don't already exist
+                    for prop_name, prop_value in properties.items():
+                        if prop_name not in existing_prop_names:
+                            # Determine property type
+                            prop_type = "STRING"  # Default
+                            if isinstance(prop_value, int):
+                                prop_type = "INTEGER"
+                            elif isinstance(prop_value, float):
+                                prop_type = "FLOAT"
+                            elif isinstance(prop_value, bool):
+                                prop_type = "BOOLEAN"
+                            
+                            property_obj = {
+                                "name": prop_name,
+                                "type": prop_type,
+                                "description": f"Property {prop_name} of {entity_type}"
+                            }
+                            
+                            existing_node["properties"].append(property_obj)
+                    
+                    self.logger.debug(f"Merged properties into existing MCP node: {entity_type}")
+                    continue
                 
-                # Add all properties with proper types
+                # Build node properties according to MCP schema
+                node_properties = []
+                key_property = None
+                
+                # Create properties according to MCP Property schema
                 for prop_name, prop_value in properties.items():
                     # Determine property type
                     prop_type = "STRING"  # Default
@@ -265,32 +289,38 @@ class GraphIngestionTool:
                     elif isinstance(prop_value, bool):
                         prop_type = "BOOLEAN"
                     
-                    node_properties.append({
+                    property_obj = {
                         "name": prop_name,
                         "type": prop_type,
-                        "description": f"Property {prop_name} of {entity_type}",
-                        "required": prop_name == "name"  # Make name required
-                    })
+                        "description": f"Property {prop_name} of {entity_type}"
+                    }
+                    
+                    node_properties.append(property_obj)
+                    
+                    # Use the first property or 'name' as key property
+                    if prop_name == "name" or key_property is None:
+                        key_property = property_obj
                 
-                # Ensure we have a name property if none exists
-                if not any(prop["name"] == "name" for prop in node_properties):
-                    node_properties.insert(0, {
+                # Ensure we have a key property (required by MCP schema)
+                if key_property is None:
+                    key_property = {
                         "name": "name",
                         "type": "STRING",
-                        "description": f"Name identifier for {entity_type}",
-                        "required": True
-                    })
+                        "description": f"Name identifier for {entity_type}"
+                    }
+                    node_properties.insert(0, key_property)
                 
+                # Build node according to MCP Node schema
                 node = {
                     "label": entity_type,
-                    "properties": node_properties,
-                    "description": f"Node representing {entity_type}"
+                    "key_property": key_property,  # REQUIRED by MCP schema
+                    "properties": node_properties
                 }
                 
-                nodes.append(node)
-                self.logger.debug(f"Built node: {entity_type}")
+                nodes_by_label[entity_type] = node
+                self.logger.debug(f"Built new MCP node: {entity_type}")
             
-            # Build relationships with proper structure
+            # Build relationships with proper MCP schema structure and deduplication
             for rel in entities_relationships.get("relationships", []):
                 rel_type = rel.get("type", "RELATED_TO")
                 from_entity = rel.get("from", "")
@@ -301,8 +331,41 @@ class GraphIngestionTool:
                 to_label = self._find_entity_label(to_entity, entities_relationships.get("entities", []))
                 
                 if from_label and to_label:
-                    # Build relationship properties
+                    # Create unique relationship key
+                    rel_key = f"{rel_type}_{from_label}_{to_label}"
+                    
+                    # Check if we already have this relationship type combination
+                    if rel_key in relationships_by_type:
+                        # Merge properties from this relationship into existing relationship
+                        existing_rel = relationships_by_type[rel_key]
+                        existing_prop_names = {prop["name"] for prop in existing_rel["properties"]}
+                        
+                        # Add new properties that don't already exist
+                        for prop_name, prop_value in rel.get("properties", {}).items():
+                            if prop_name not in existing_prop_names:
+                                prop_type = "STRING"
+                                if isinstance(prop_value, int):
+                                    prop_type = "INTEGER"
+                                elif isinstance(prop_value, float):
+                                    prop_type = "FLOAT"
+                                elif isinstance(prop_value, bool):
+                                    prop_type = "BOOLEAN"
+                                    
+                                property_obj = {
+                                    "name": prop_name,
+                                    "type": prop_type,
+                                    "description": f"Property {prop_name} of {rel_type}"
+                                }
+                                
+                                existing_rel["properties"].append(property_obj)
+                        
+                        self.logger.debug(f"Merged properties into existing MCP relationship: {rel_type}")
+                        continue
+                    
+                    # Build relationship properties according to MCP schema
                     rel_properties = []
+                    key_property = None
+                    
                     for prop_name, prop_value in rel.get("properties", {}).items():
                         prop_type = "STRING"
                         if isinstance(prop_value, int):
@@ -312,43 +375,61 @@ class GraphIngestionTool:
                         elif isinstance(prop_value, bool):
                             prop_type = "BOOLEAN"
                             
-                        rel_properties.append({
+                        property_obj = {
                             "name": prop_name,
                             "type": prop_type,
                             "description": f"Property {prop_name} of {rel_type}"
-                        })
+                        }
+                        
+                        rel_properties.append(property_obj)
+                        
+                        # First property can be key property
+                        if key_property is None:
+                            key_property = property_obj
                     
+                    # Build relationship according to MCP Relationship schema
                     relationship = {
                         "type": rel_type,
                         "start_node_label": from_label,
                         "end_node_label": to_label,
-                        "properties": rel_properties,
-                        "description": f"Relationship {rel_type} from {from_label} to {to_label}"
+                        "properties": rel_properties
                     }
                     
-                    relationships.append(relationship)
-                    self.logger.debug(f"Built relationship: {rel_type}")
+                    # Add key_property if we have one (optional for relationships)
+                    if key_property:
+                        relationship["key_property"] = key_property
+                    
+                    relationships_by_type[rel_key] = relationship
+                    self.logger.debug(f"Built new MCP relationship: {rel_type}")
             
-            # Build complete data model with proper structure
+            # Convert dictionaries to lists
+            nodes = list(nodes_by_label.values())
+            relationships = list(relationships_by_type.values())
+            
+            # Build complete data model with proper MCP DataModel schema
             data_model = {
                 "nodes": nodes,
-                "relationships": relationships,
-                "description": "Auto-generated data model from content analysis"
+                "relationships": relationships
             }
             
-            # Validate data model using MCP with correct parameters
-            # FIX: Pass data_model as the parameter, not wrapped in another dict
+            # Log summary
+            self.logger.info(f"Built data model with {len(nodes)} unique node types and {len(relationships)} unique relationship types")
+            
+            # Validate data model using MCP validate_data_model tool
             validation_result = self.make_mcp_request(
                 self.data_modeling_server_url,
                 "validate_data_model",
-                data_model  # Direct data model, not {"data_model": data_model}
+                {"data_model": data_model}  # Pass as object, not JSON string
             )
             
-            if "error" not in validation_result:
-                self.logger.info("Data model validation successful")
+            if validation_result.get("success", False):
+                self.logger.info("MCP data model validation successful")
+                validation_details = validation_result.get("result", {})
+                self.logger.info(f"Validation result: {validation_details}")
                 return data_model
             else:
-                self.logger.error(f"Data model validation failed: {validation_result['error']}")
+                error_msg = validation_result.get('error', 'Unknown error')
+                self.logger.error(f"MCP data model validation failed: {error_msg}")
                 # Return the data model anyway for debugging
                 return data_model
                 
@@ -379,15 +460,17 @@ class GraphIngestionTool:
             
             # Step 1: Create constraints first (if available)
             try:
-                # FIX: Pass data model directly, not wrapped
+                # Use correct parameter structure for get_constraints_cypher_queries
                 constraints_result = self.make_mcp_request(
                     self.data_modeling_server_url,
                     "get_constraints_cypher_queries",
-                    data_model
+                    {"data_model": data_model}  # Pass as object, not JSON string
                 )
                 
-                if "error" not in constraints_result and "result" in constraints_result:
+                if constraints_result.get("success", False) and "result" in constraints_result:
                     constraints = constraints_result["result"]
+                    self.logger.info(f"Retrieved {len(constraints) if isinstance(constraints, list) else 0} constraint queries")
+                    
                     if isinstance(constraints, list):
                         for constraint_query in constraints:
                             result = self.make_mcp_request(
@@ -395,54 +478,85 @@ class GraphIngestionTool:
                                 "write_neo4j_cypher",
                                 {"query": constraint_query}
                             )
-                            if "error" in result:
-                                self.logger.warning(f"Constraint creation failed: {result['error']}")
+                            if result.get("success", False):
+                                self.logger.info("Constraint created successfully")
+                            else:
+                                self.logger.warning(f"Constraint creation failed: {result.get('error', 'Unknown error')}")
                     else:
                         self.logger.debug("No constraints returned or invalid format")
                 else:
-                    self.logger.debug(f"Constraints query failed: {constraints_result.get('error', 'Unknown error')}")
+                    error_msg = constraints_result.get('error', 'Unknown error')
+                    self.logger.warning(f"Constraints query failed: {error_msg}")
             except Exception as e:
                 self.logger.warning(f"Constraint creation skipped due to error: {e}")
             
             # Step 2: Create nodes using MCP-generated queries
             for node in data_model.get("nodes", []):
                 try:
-                    # FIX: Correct parameter structure for get_node_cypher_ingest_query
+                    # Use correct parameter structure for get_node_cypher_ingest_query
                     query_result = self.make_mcp_request(
                         self.data_modeling_server_url,
                         "get_node_cypher_ingest_query",
-                        {
-                            "node_label": node["label"],
-                            "properties": [prop["name"] for prop in node.get("properties", [])]
-                        }
+                        {"node": node}  # Pass as object, not JSON string
                     )
                     
-                    if "error" not in query_result and "result" in query_result:
-                        cypher_query = query_result["result"]
+                    if query_result.get("success", False) and "result" in query_result:
+                        # Extract Cypher query from nested MCP response structure
+                        result_data = query_result["result"]
+                        cypher_query = None
                         
-                        # Prepare records for this node type
-                        records = self._prepare_node_records(node, entities_relationships.get("entities", []))
+                        # Check for structuredContent first (preferred format)
+                        if isinstance(result_data, dict) and "structuredContent" in result_data:
+                            structured_content = result_data["structuredContent"]
+                            if isinstance(structured_content, dict) and "result" in structured_content:
+                                cypher_query = structured_content["result"]
                         
-                        if records and cypher_query:
-                            # Execute with records
-                            result = self.make_mcp_request(
-                                self.cypher_server_url,
-                                "write_neo4j_cypher",
-                                {
-                                    "query": cypher_query,
-                                    "parameters": {"records": records}  # Changed from "params"
-                                }
-                            )
+                        # Fallback: check for direct string result
+                        if not cypher_query and isinstance(result_data, str):
+                            cypher_query = result_data
+                        
+                        # Fallback: check for content array format
+                        if not cypher_query and isinstance(result_data, dict) and "content" in result_data:
+                            content = result_data["content"]
+                            if isinstance(content, list) and len(content) > 0:
+                                first_content = content[0]
+                                if isinstance(first_content, dict) and "text" in first_content:
+                                    cypher_query = first_content["text"]
+                        
+                        if cypher_query:
+                            self.logger.info(f"Generated Cypher query for {node['label']} nodes")
+                            self.logger.debug(f"Query: {cypher_query}")
                             
-                            if "error" not in result:
-                                entities_created += len(records)
-                                self.logger.debug(f"Created {len(records)} {node['label']} nodes")
+                            # Prepare records for this node type
+                            records = self._prepare_node_records(node, entities_relationships.get("entities", []))
+                            
+                            if records and cypher_query:
+                                # Execute with records - use "params" as expected by mcp-neo4j-cypher
+                                result = self.make_mcp_request(
+                                    self.cypher_server_url,
+                                    "write_neo4j_cypher",
+                                    {
+                                        "query": cypher_query,
+                                        "params": {"records": records}
+                                    }
+                                )
+                                
+                                if result.get("success", False):
+                                    entities_created += len(records)
+                                    result_details = result.get("result", {})
+                                    self.logger.info(f"Successfully created {len(records)} {node['label']} nodes")
+                                    self.logger.debug(f"Creation result: {result_details}")
+                                else:
+                                    error_msg = result.get('error', 'Unknown error')
+                                    self.logger.error(f"Node creation failed for {node['label']}: {error_msg}")
                             else:
-                                self.logger.warning(f"Node creation failed: {result['error']}")
+                                self.logger.warning(f"No records to create for node {node['label']}")
                         else:
-                            self.logger.debug(f"No records to create for node {node['label']}")
+                            self.logger.error(f"Could not extract Cypher query from MCP response for {node['label']}")
+                            self.logger.debug(f"Raw response: {json.dumps(result_data)}")
                     else:
-                        self.logger.warning(f"Node query generation failed: {query_result.get('error', 'Unknown error')}")
+                        error_msg = query_result.get('error', 'Unknown error')
+                        self.logger.error(f"Node query generation failed for {node['label']}: {error_msg}")
                         
                 except Exception as e:
                     self.logger.error(f"Node creation failed for {node.get('label', 'unknown')}: {e}")
@@ -451,43 +565,93 @@ class GraphIngestionTool:
             # Step 3: Create relationships using MCP-generated queries
             for relationship in data_model.get("relationships", []):
                 try:
-                    # FIX: Correct parameter structure for relationship query
-                    query_result = self.make_mcp_request(
-                        self.data_modeling_server_url,
-                        "get_relationship_cypher_ingest_query",
-                        {
-                            "relationship_type": relationship["type"],
-                            "start_node_label": relationship["start_node_label"],
-                            "end_node_label": relationship["end_node_label"],
-                            "properties": [prop["name"] for prop in relationship.get("properties", [])]
-                        }
-                    )
+                    # Find the corresponding nodes for this relationship
+                    start_node = None
+                    end_node = None
+                    for node in data_model.get("nodes", []):
+                        if node["label"] == relationship["start_node_label"]:
+                            start_node = node
+                        if node["label"] == relationship["end_node_label"]:
+                            end_node = node
                     
-                    if "error" not in query_result and "result" in query_result:
-                        cypher_query = query_result["result"]
+                    if start_node and end_node:
+                        # Use correct parameter structure for get_relationship_cypher_ingest_query
+                        # Required: data_model, relationship_type, relationship_start_node_label, relationship_end_node_label
+                        data_model_snippet = {
+                            "nodes": [start_node, end_node],
+                            "relationships": [relationship]
+                        }
                         
-                        # Prepare relationship records
-                        records = self._prepare_relationship_records(relationship, entities_relationships.get("relationships", []))
+                        query_result = self.make_mcp_request(
+                            self.data_modeling_server_url,
+                            "get_relationship_cypher_ingest_query",
+                            {
+                                "data_model": data_model_snippet,  # Pass as object, not JSON string
+                                "relationship_type": relationship["type"],     # Required: relationship type
+                                "relationship_start_node_label": relationship["start_node_label"],  # Required: start node label
+                                "relationship_end_node_label": relationship["end_node_label"]       # Required: end node label
+                            }
+                        )
                         
-                        if records and cypher_query:
-                            result = self.make_mcp_request(
-                                self.cypher_server_url,
-                                "write_neo4j_cypher",
-                                {
-                                    "query": cypher_query,
-                                    "parameters": {"records": records}  # Changed from "params"
-                                }
-                            )
+                        if query_result.get("success", False) and "result" in query_result:
+                            # Extract Cypher query from nested MCP response structure
+                            result_data = query_result["result"]
+                            cypher_query = None
                             
-                            if "error" not in result:
-                                relationships_created += len(records)
-                                self.logger.debug(f"Created {len(records)} {relationship['type']} relationships")
+                            # Check for structuredContent first (preferred format)
+                            if isinstance(result_data, dict) and "structuredContent" in result_data:
+                                structured_content = result_data["structuredContent"]
+                                if isinstance(structured_content, dict) and "result" in structured_content:
+                                    cypher_query = structured_content["result"]
+                            
+                            # Fallback: check for direct string result
+                            if not cypher_query and isinstance(result_data, str):
+                                cypher_query = result_data
+                            
+                            # Fallback: check for content array format
+                            if not cypher_query and isinstance(result_data, dict) and "content" in result_data:
+                                content = result_data["content"]
+                                if isinstance(content, list) and len(content) > 0:
+                                    first_content = content[0]
+                                    if isinstance(first_content, dict) and "text" in first_content:
+                                        cypher_query = first_content["text"]
+                            
+                            if cypher_query:
+                                self.logger.info(f"Generated Cypher query for {relationship['type']} relationships")
+                                self.logger.debug(f"Query: {cypher_query}")
+                                
+                                # Prepare relationship records
+                                records = self._prepare_relationship_records(relationship, entities_relationships.get("relationships", []))
+                                
+                                if records and cypher_query:
+                                    # Execute with records - use "params" as expected by mcp-neo4j-cypher
+                                    result = self.make_mcp_request(
+                                        self.cypher_server_url,
+                                        "write_neo4j_cypher",
+                                        {
+                                            "query": cypher_query,
+                                            "params": {"records": records}
+                                        }
+                                    )
+                                    
+                                    if result.get("success", False):
+                                        relationships_created += len(records)
+                                        result_details = result.get("result", {})
+                                        self.logger.info(f"Successfully created {len(records)} {relationship['type']} relationships")
+                                        self.logger.debug(f"Creation result: {result_details}")
+                                    else:
+                                        error_msg = result.get('error', 'Unknown error')
+                                        self.logger.error(f"Relationship creation failed for {relationship['type']}: {error_msg}")
+                                else:
+                                    self.logger.warning(f"No records to create for relationship {relationship['type']}")
                             else:
-                                self.logger.warning(f"Relationship creation failed: {result['error']}")
+                                self.logger.error(f"Could not extract Cypher query from MCP response for {relationship['type']}")
+                                self.logger.debug(f"Raw response: {json.dumps(result_data)}")
                         else:
-                            self.logger.debug(f"No records to create for relationship {relationship['type']}")
+                            error_msg = query_result.get('error', 'Unknown error')
+                            self.logger.error(f"Relationship query generation failed for {relationship['type']}: {error_msg}")
                     else:
-                        self.logger.warning(f"Relationship query generation failed: {query_result.get('error', 'Unknown error')}")
+                        self.logger.warning(f"Could not find start_node ({relationship['start_node_label']}) or end_node ({relationship['end_node_label']}) for relationship {relationship['type']}")
                         
                 except Exception as e:
                     self.logger.error(f"Relationship creation failed for {relationship.get('type', 'unknown')}: {e}")
@@ -513,15 +677,14 @@ class GraphIngestionTool:
 
     def _prepare_node_records(self, node: Dict[str, Any], entities: List[Dict]) -> List[Dict]:
         """
-        Fixed node record preparation with proper structure.
+        FIXED node record preparation matching MCP expectations.
         
-        FIXES:
-        1. Better property mapping
-        2. Handle missing properties gracefully
-        3. Ensure required fields are present
+        The MCP-generated Cypher queries expect records with the exact property names
+        as defined in the node's property schema.
         """
         records = []
         node_label = node["label"]
+        key_property_name = node.get("key_property", {}).get("name", "name")
         
         for entity in entities:
             if entity.get("type") == node_label:
@@ -534,30 +697,26 @@ class GraphIngestionTool:
                     
                     if prop_name in properties:
                         record[prop_name] = properties[prop_name]
-                    elif prop_def.get("required", False):
-                        # Provide default for required properties
-                        if prop_name == "name":
-                            record[prop_name] = properties.get("name", f"unnamed_{node_label}")
-                        else:
-                            record[prop_name] = f"default_{prop_name}"
+                    elif prop_name == key_property_name:
+                        # Ensure key property has a value
+                        record[prop_name] = properties.get("name", f"unnamed_{node_label}_{len(records)}")
                 
-                # Ensure we have at least a name property
-                if "name" not in record:
-                    record["name"] = properties.get("name", f"unnamed_{node_label}")
+                # Ensure we have the key property
+                if key_property_name not in record:
+                    record[key_property_name] = properties.get("name", f"unnamed_{node_label}_{len(records)}")
                 
                 if record:  # Only add if we have data
                     records.append(record)
+                    self.logger.debug(f"Prepared node record: {record}")
         
         return records
 
     def _prepare_relationship_records(self, relationship: Dict[str, Any], relationships: List[Dict]) -> List[Dict]:
         """
-        Fixed relationship record preparation.
+        FIXED relationship record preparation matching MCP expectations.
         
-        FIXES:
-        1. Better source/target ID mapping
-        2. Handle missing relationship properties
-        3. Ensure proper record structure
+        The MCP-generated Cypher queries expect records with sourceId and targetId
+        for connecting nodes, plus any relationship properties.
         """
         records = []
         rel_type = relationship["type"]
@@ -565,8 +724,8 @@ class GraphIngestionTool:
         for rel in relationships:
             if rel.get("type") == rel_type:
                 record = {
-                    "start_node_id": rel.get("from", ""),
-                    "end_node_id": rel.get("to", "")
+                    "sourceId": rel.get("from", ""),  # MCP expects sourceId/targetId
+                    "targetId": rel.get("to", "")
                 }
                 
                 # Add relationship properties
@@ -576,12 +735,13 @@ class GraphIngestionTool:
                     if prop_name in rel_props:
                         record[prop_name] = rel_props[prop_name]
                 
-                if record["start_node_id"] and record["end_node_id"]:  # Only add valid relationships
+                if record["sourceId"] and record["targetId"]:  # Only add valid relationships
                     records.append(record)
+                    self.logger.debug(f"Prepared relationship record: {record}")
         
         return records
 
-    def ingest_content(self, content: str, source_name: str = "document", content_type: str = "text", metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def ingest_content(self, content: str, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Main entry point for content ingestion.
         
@@ -592,22 +752,8 @@ class GraphIngestionTool:
             metadata: Additional metadata
         """
         try:
-            # Determine document type from content_type and metadata
-            document_type = content_type
-            if metadata and "document_type" in metadata:
-                document_type = metadata["document_type"]
-
-            self.logger.info(f"Starting content ingestion for '{source_name}' (type: {document_type})")
-
             # Use the enhanced ingestion approach
-            result = self.ingest_content_with_schema_validation(content, document_type)
-            
-            if result.get("success"):
-                result["source_name"] = source_name
-                result["content_type"] = content_type
-                if metadata:
-                    result["metadata"] = metadata
-
+            result = self.ingest_content_with_schema_validation(content)
             return result
 
         except Exception as e:
@@ -620,7 +766,7 @@ class GraphIngestionTool:
                 "stats": self.processing_stats
             }
 
-    def ingest_content_with_schema_validation(self, content: str, document_type: str = "document") -> Dict[str, Any]:
+    def ingest_content_with_schema_validation(self, content: str) -> Dict[str, Any]:
         """
         Enhanced ingestion method using proper Neo4j MCP data modeling tools.
         
@@ -632,11 +778,12 @@ class GraphIngestionTool:
         5. Execute via write_neo4j_cypher
         """
         try:
-            self.logger.info(f"Starting enhanced Neo4j ingestion for {document_type}")
+            self.logger.info(f"Starting enhanced Neo4j ingestion")
             
             # Step 1: Extract entities and relationships using LLM
             self.logger.info("Step 1: Extracting entities using LLM...")
-            entities_relationships = self._extract_entities_with_llm(content, document_type)
+            print("Document content:", content)
+            entities_relationships = self._extract_entities_with_llm(content)
             
             if not entities_relationships:
                 return {
@@ -644,6 +791,7 @@ class GraphIngestionTool:
                     "error": "Failed to extract entities from content",
                     "stats": self.processing_stats
                 }
+            print("Extracted Entities and Relationships:", json.dumps(entities_relationships))
             
             # Step 2: Build and validate Neo4j data model
             self.logger.info("Step 2: Building and validating data model...")
@@ -655,6 +803,7 @@ class GraphIngestionTool:
                     "error": "Failed to build valid data model",
                     "stats": self.processing_stats
                 }
+            print("Data Model:", json.dumps(data_model))
             
             # Step 3: Generate and execute Cypher queries using MCP tools
             self.logger.info("Step 3: Generating and executing Cypher queries...")
@@ -677,12 +826,11 @@ class GraphIngestionTool:
                 "stats": self.processing_stats
             }
 
-    def _extract_entities_with_llm(self, content: str, document_type: str) -> Dict[str, Any]:
+    def _extract_entities_with_llm(self, content: str) -> Dict[str, Any]:
         """Extract entities and relationships using LLM."""
         try:
             prompt = f"""
-            Analyze the following {document_type} content and extract entities and relationships.
-            
+            Analyze the following content and extract entities and relationships.            
             Content: {content}
             
             Return a JSON structure with:
@@ -695,8 +843,32 @@ class GraphIngestionTool:
                 ]
             }}
             
-            Focus on key concepts, people, organizations, locations, and their relationships.
-            Make entity types PascalCase and relationship types SCREAMING_SNAKE_CASE.
+            IMPORTANT GUIDELINES:
+            1. Focus on key concepts, people, organizations, locations, and their relationships
+            2. Make entity types PascalCase (e.g., Person, Organization, Location, Concept)
+            3. Make relationship types SCREAMING_SNAKE_CASE (e.g., WORKS_AT, LOCATED_IN, RELATED_TO)
+            4. Use GENERIC entity types when possible:
+               - Use "Person" for all people (not PersonA, PersonB, etc.)
+               - Use "Organization" for all organizations
+               - Use "Location" for all places
+               - Use "Document" for all documents
+               - Use "Concept" for abstract ideas or topics
+            5. Make each entity unique by using different "name" properties, NOT different types
+            6. Entity names in "from" and "to" relationships should match the "name" property of entities
+            7. Keep entity types broad and general to avoid duplication
+            
+            Example:
+            {{
+                "entities": [
+                    {{"type": "Person", "properties": {{"name": "John Smith", "role": "Engineer"}}}},
+                    {{"type": "Person", "properties": {{"name": "Mary Johnson", "role": "Manager"}}}},
+                    {{"type": "Organization", "properties": {{"name": "TechCorp", "industry": "Technology"}}}}
+                ],
+                "relationships": [
+                    {{"from": "John Smith", "to": "TechCorp", "type": "WORKS_AT", "properties": {{"since": "2020"}}}},
+                    {{"from": "Mary Johnson", "to": "John Smith", "type": "MANAGES", "properties": {{}}}}
+                ]
+            }}
             """
             
             response = self.llm.invoke(prompt)
@@ -735,36 +907,3 @@ class GraphIngestionTool:
             "errors": []
         }
         self.logger.info("Processing statistics reset")
-
-    # [Rest of the methods remain the same...]
-
-"""
-DEBUGGING RECOMMENDATIONS:
-
-1. Enable detailed logging:
-   - Set logging level to DEBUG
-   - Monitor the exact parameters being sent to MCP servers
-   - Check server responses for format issues
-
-2. Test individual MCP tools:
-   - Try calling validate_data_model with minimal data
-   - Test get_node_cypher_ingest_query with simple parameters
-   - Verify server connectivity and tool availability
-
-3. Check MCP server versions:
-   - Ensure you're using compatible Neo4j MCP server versions
-   - Verify tool names match exactly (case-sensitive)
-   - Check if parameter formats have changed
-
-4. Manual testing:
-   - Use MCP client tools to test server responses
-   - Validate JSON-RPC payload formats
-   - Test with minimal data structures first
-
-COMMON ISSUES FIXED:
-- Parameter wrapping (data_model vs {"data_model": data_model})
-- Response parsing (direct JSON vs SSE)
-- Property type mapping
-- Required field handling
-- Error handling and recovery
-"""

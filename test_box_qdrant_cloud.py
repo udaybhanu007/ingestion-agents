@@ -8,6 +8,7 @@ import sys
 import ssl
 import asyncio
 import warnings
+import json
 
 # Comprehensive SSL fixes for Qdrant cloud
 os.environ['PYTHONHTTPSVERIFY'] = '0'
@@ -110,8 +111,13 @@ async def test_box_file_ingestion():
             #content=""
         )
 
-        print(f"✅ Plan created with ID: {plan.get('plan_id', 'N/A')}")
-        print(f"📊 Plan steps: {len(plan.get('steps', []))}")
+        # Print the plan in JSON format (use repr fallback for non-serializable objects)
+        try:
+            print("📦 Ingestion plan (JSON):")
+            print(json.dumps(plan, indent=2, default=lambda o: repr(o)))
+        except Exception as e:
+            print(f"⚠️ Failed to serialize plan to JSON: {e}")
+            print("Raw plan:", repr(plan))
 
         print("⚡ Executing ingestion plan...")
         result = await executor.execute_plan_async(plan)

@@ -170,11 +170,26 @@ class VectorToolV2:
         qdrant_api_key = qdrant_config.get('api_key')
         self.logger.info(f"Qdrant config debug - URL: {qdrant_url}, API key present: {bool(qdrant_api_key)}")
         
-        # Initialize Qdrant client
-        self.qdrant_client = QdrantClient(
-            url=qdrant_url,
-            api_key=qdrant_api_key
-        )
+        # Optionally allow insecure TLS skip for development/testing by
+        # setting QDRANT_INSECURE_SKIP_VERIFY=true in the environment.
+        insecure_skip = os.getenv("QDRANT_INSECURE_SKIP_VERIFY", "false").lower() in ("1", "true", "yes")
+        if insecure_skip:
+            # qdrant-client forwards unknown kwargs into underlying HTTP client (httpx),
+            # passing `verify=False` will disable certificate verification. This is
+            # intended only for development/testing when an explicit CA bundle is not
+            # available. Do NOT enable in production.
+            self.logger.warning("Qdrant TLS verification disabled via QDRANT_INSECURE_SKIP_VERIFY env var")
+            self.qdrant_client = QdrantClient(
+                url=qdrant_url,
+                api_key=qdrant_api_key,
+                verify=False,
+            )
+        else:
+            # Initialize Qdrant client (default: verify TLS)
+            self.qdrant_client = QdrantClient(
+                url=qdrant_url,
+                api_key=qdrant_api_key
+            )
         
         self.collection_name = qdrant_config.get('collection_name', 'documents_v2')
         

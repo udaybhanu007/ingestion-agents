@@ -388,7 +388,7 @@ class ExecutionAgent:
             
             # Get document URI from step args
             args = step.get('args', {})
-            doc_uri = args.get('doc_uri', plan.get('document_uri', ''))
+            doc_uri = args.get('doc_uri', plan.get('doc_uri', ''))
             
             if not doc_uri:
                 return {

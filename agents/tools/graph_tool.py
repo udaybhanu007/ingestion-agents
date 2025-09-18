@@ -464,7 +464,7 @@ class GraphIngestionTool:
                 constraints_result = self.make_mcp_request(
                     self.data_modeling_server_url,
                     "get_constraints_cypher_queries",
-                    {"data_model": data_model}  # Pass as object, not JSON string
+                    {"data_model": json.dumps(data_model)}  # Pass as object, not JSON string
                 )
                 
                 if constraints_result.get("success", False) and "result" in constraints_result:

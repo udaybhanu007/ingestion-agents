@@ -44,18 +44,46 @@ def verify_neo4j_ingestion():
             
             headers = {
                 "Content-Type": "application/json",
-                "Accept": "application/json"
+                "Accept": "application/json, text/event-stream"
             }
             
             response = requests.post(neo4j_server_url, json=payload, headers=headers, timeout=30)
             
             if response.status_code == 200:
-                result = response.json()
-                if "result" in result:
-                    return result["result"]
-                else:
-                    print(f"❌ Error in MCP response: {result}")
+                content_type = response.headers.get('content-type', '').lower()
+                if 'text/event-stream' in content_type:
+                    # Parse SSE response
+                    lines = response.text.strip().split('\n')
+                    for line in lines:
+                        if line.startswith('data: '):
+                            json_str = line[6:]
+                            if json_str.strip() == '[DONE]':
+                                continue
+                            try:
+                                parsed_data = json.loads(json_str)
+                                if "result" in parsed_data:
+                                    return parsed_data["result"]
+                                elif "error" in parsed_data:
+                                    print(f"❌ Error in MCP SSE response: {parsed_data['error']}")
+                                    return None
+                                else:
+                                    return parsed_data
+                            except json.JSONDecodeError:
+                                print(f"❌ Failed to parse SSE JSON: {json_str}")
+                                continue
+                    print(f"❌ No valid SSE data found in response")
                     return None
+                else:
+                    try:
+                        result = response.json()
+                        if "result" in result:
+                            return result["result"]
+                        else:
+                            print(f"❌ Error in MCP response: {result}")
+                            return None
+                    except Exception as e:
+                        print(f"❌ Failed to parse JSON response: {e}")
+                        return None
             else:
                 print(f"❌ HTTP Error: {response.status_code} - {response.text}")
                 return None

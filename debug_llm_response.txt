@@ -1,0 +1,629 @@
+```json
+{
+    "schema_discovery": {
+        "confidence": 0.95,
+        "entity_types": [
+            {
+                "type": "MedicalImage",
+                "properties": ["id", "Image_Index", "Finding_Labels", "Patient_ID", "Patient_Age", "Patient_Gender", "View_Position"],
+                "description": "Medical imaging record"
+            },
+            {
+                "type": "Patient",
+                "properties": ["id", "Patient_ID", "Patient_Age", "Patient_Gender"],
+                "description": "Patient information"
+            },
+            {
+                "type": "Finding",
+                "properties": ["id", "Finding_Labels", "Image_Index"],
+                "description": "Finding labels associated with medical images"
+            }
+        ],
+        "relationship_types": [
+            {
+                "type": "HAS_IMAGE",
+                "start_entity": "Patient",
+                "end_entity": "MedicalImage",
+                "description": "Patient has medical images"
+            },
+            {
+                "type": "HAS_FINDING",
+                "start_entity": "MedicalImage",
+                "end_entity": "Finding",
+                "description": "Medical image has findings"
+            }
+        ]
+    },
+    "entity_extraction": {
+        "entities": [
+            {
+                "type": "MedicalImage",
+                "properties": {
+                    "id": "image_1",
+                    "Image_Index": "00000001_000.png",
+                    "Finding_Labels": "Cardiomegaly",
+                    "Patient_ID": "1",
+                    "Patient_Age": "58",
+                    "Patient_Gender": "M",
+                    "View_Position": "PA"
+                }
+            },
+            {
+                "type": "MedicalImage",
+                "properties": {
+                    "id": "image_2",
+                    "Image_Index": "00000001_001.png",
+                    "Finding_Labels": "Cardiomegaly|Emphysema",
+                    "Patient_ID": "1",
+                    "Patient_Age": "58",
+                    "Patient_Gender": "M",
+                    "View_Position": "PA"
+                }
+            },
+            {
+                "type": "MedicalImage",
+                "properties": {
+                    "id": "image_3",
+                    "Image_Index": "00000001_002.png",
+                    "Finding_Labels": "Cardiomegaly|Effusion",
+                    "Patient_ID": "1",
+                    "Patient_Age": "58",
+                    "Patient_Gender": "M",
+                    "View_Position": "PA"
+                }
+            },
+            {
+                "type": "MedicalImage",
+                "properties": {
+                    "id": "image_4",
+                    "Image_Index": "00000002_000.png",
+                    "Finding_Labels": "No Finding",
+                    "Patient_ID": "2",
+                    "Patient_Age": "81",
+                    "Patient_Gender": "M",
+                    "View_Position": "PA"
+                }
+            },
+            {
+                "type": "MedicalImage",
+                "properties": {
+                    "id": "image_5",
+                    "Image_Index": "00000003_000.png",
+                    "Finding_Labels": "Hernia",
+                    "Patient_ID": "3",
+                    "Patient_Age": "81",
+                    "Patient_Gender": "F",
+                    "View_Position": "PA"
+                }
+            },
+            {
+                "type": "MedicalImage",
+                "properties": {
+                    "id": "image_6",
+                    "Image_Index": "00000003_001.png",
+                    "Finding_Labels": "Hernia",
+                    "Patient_ID": "3",
+                    "Patient_Age": "74",
+                    "Patient_Gender": "F",
+                    "View_Position": "PA"
+                }
+            },
+            {
+                "type": "MedicalImage",
+                "properties": {
+                    "id": "image_7",
+                    "Image_Index": "00000003_002.png",
+                    "Finding_Labels": "Hernia",
+                    "Patient_ID": "3",
+                    "Patient_Age": "75",
+                    "Patient_Gender": "F",
+                    "View_Position": "PA"
+                }
+            },
+            {
+                "type": "MedicalImage",
+                "properties": {
+                    "id": "image_8",
+                    "Image_Index": "00000003_003.png",
+                    "Finding_Labels": "Hernia|Infiltration",
+                    "Patient_ID": "3",
+                    "Patient_Age": "76",
+                    "Patient_Gender": "F",
+                    "View_Position": "PA"
+                }
+            },
+            {
+                "type": "MedicalImage",
+                "properties": {
+                    "id": "image_9",
+                    "Image_Index": "00000003_004.png",
+                    "Finding_Labels": "Hernia",
+                    "Patient_ID": "3",
+                    "Patient_Age": "77",
+                    "Patient_Gender": "F",
+                    "View_Position": "PA"
+                }
+            },
+            {
+                "type": "MedicalImage",
+                "properties": {
+                    "id": "image_10",
+                    "Image_Index": "00000003_005.png",
+                    "Finding_Labels": "Hernia",
+                    "Patient_ID": "3",
+                    "Patient_Age": "78",
+                    "Patient_Gender": "F",
+                    "View_Position": "PA"
+                }
+            },
+            {
+                "type": "MedicalImage",
+                "properties": {
+                    "id": "image_11",
+                    "Image_Index": "00000003_006.png",
+                    "Finding_Labels": "Hernia",
+                    "Patient_ID": "3",
+                    "Patient_Age": "79",
+                    "Patient_Gender": "F",
+                    "View_Position": "PA"
+                }
+            },
+            {
+                "type": "MedicalImage",
+                "properties": {
+                    "id": "image_12",
+                    "Image_Index": "00000003_007.png",
+                    "Finding_Labels": "Hernia",
+                    "Patient_ID": "3",
+                    "Patient_Age": "80",
+                    "Patient_Gender": "F",
+                    "View_Position": "PA"
+                }
+            },
+            {
+                "type": "MedicalImage",
+                "properties": {
+                    "id": "image_13",
+                    "Image_Index": "00000004_000.png",
+                    "Finding_Labels": "Mass|Nodule",
+                    "Patient_ID": "4",
+                    "Patient_Age": "82",
+                    "Patient_Gender": "M",
+                    "View_Position": "AP"
+                }
+            },
+            {
+                "type": "MedicalImage",
+                "properties": {
+                    "id": "image_14",
+                    "Image_Index": "00000005_000.png",
+                    "Finding_Labels": "No Finding",
+                    "Patient_ID": "5",
+                    "Patient_Age": "69",
+                    "Patient_Gender": "F",
+                    "View_Position": "PA"
+                }
+            },
+            {
+                "type": "MedicalImage",
+                "properties": {
+                    "id": "image_15",
+                    "Image_Index": "00000005_001.png",
+                    "Finding_Labels": "No Finding",
+                    "Patient_ID": "5",
+                    "Patient_Age": "69",
+                    "Patient_Gender": "F",
+                    "View_Position": "AP"
+                }
+            },
+            {
+                "type": "Patient",
+                "properties": {
+                    "id": "patient_1",
+                    "Patient_ID": "1",
+                    "Patient_Age": "58",
+                    "Patient_Gender": "M"
+                }
+            },
+            {
+                "type": "Patient",
+                "properties": {
+                    "id": "patient_2",
+                    "Patient_ID": "2",
+                    "Patient_Age": "81",
+                    "Patient_Gender": "M"
+                }
+            },
+            {
+                "type": "Patient",
+                "properties": {
+                    "id": "patient_3",
+                    "Patient_ID": "3",
+                    "Patient_Age": "81",
+                    "Patient_Gender": "F"
+                }
+            },
+            {
+                "type": "Patient",
+                "properties": {
+                    "id": "patient_4",
+                    "Patient_ID": "4",
+                    "Patient_Age": "82",
+                    "Patient_Gender": "M"
+                }
+            },
+            {
+                "type": "Patient",
+                "properties": {
+                    "id": "patient_5",
+                    "Patient_ID": "5",
+                    "Patient_Age": "69",
+                    "Patient_Gender": "F"
+                }
+            },
+            {
+                "type": "Finding",
+                "properties": {
+                    "id": "finding_1",
+                    "Finding_Labels": "Cardiomegaly",
+                    "Image_Index": "00000001_000.png"
+                }
+            },
+            {
+                "type": "Finding",
+                "properties": {
+                    "id": "finding_2",
+                    "Finding_Labels": "Cardiomegaly|Emphysema",
+                    "Image_Index": "00000001_001.png"
+                }
+            },
+            {
+                "type": "Finding",
+                "properties": {
+                    "id": "finding_3",
+                    "Finding_Labels": "Cardiomegaly|Effusion",
+                    "Image_Index": "00000001_002.png"
+                }
+            },
+            {
+                "type": "Finding",
+                "properties": {
+                    "id": "finding_4",
+                    "Finding_Labels": "No Finding",
+                    "Image_Index": "00000002_000.png"
+                }
+            },
+            {
+                "type": "Finding",
+                "properties": {
+                    "id": "finding_5",
+                    "Finding_Labels": "Hernia",
+                    "Image_Index": "00000003_000.png"
+                }
+            },
+            {
+                "type": "Finding",
+                "properties": {
+                    "id": "finding_6",
+                    "Finding_Labels": "Hernia",
+                    "Image_Index": "00000003_001.png"
+                }
+            },
+            {
+                "type": "Finding",
+                "properties": {
+                    "id": "finding_7",
+                    "Finding_Labels": "Hernia",
+                    "Image_Index": "00000003_002.png"
+                }
+            },
+            {
+                "type": "Finding",
+                "properties": {
+                    "id": "finding_8",
+                    "Finding_Labels": "Hernia|Infiltration",
+                    "Image_Index": "00000003_003.png"
+                }
+            },
+            {
+                "type": "Finding",
+                "properties": {
+                    "id": "finding_9",
+                    "Finding_Labels": "Hernia",
+                    "Image_Index": "00000003_004.png"
+                }
+            },
+            {
+                "type": "Finding",
+                "properties": {
+                    "id": "finding_10",
+                    "Finding_Labels": "Hernia",
+                    "Image_Index": "00000003_005.png"
+                }
+            },
+            {
+                "type": "Finding",
+                "properties": {
+                    "id": "finding_11",
+                    "Finding_Labels": "Hernia",
+                    "Image_Index": "00000003_006.png"
+                }
+            },
+            {
+                "type": "Finding",
+                "properties": {
+                    "id": "finding_12",
+                    "Finding_Labels": "Hernia",
+                    "Image_Index": "00000003_007.png"
+                }
+            },
+            {
+                "type": "Finding",
+                "properties": {
+                    "id": "finding_13",
+                    "Finding_Labels": "Mass|Nodule",
+                    "Image_Index": "00000004_000.png"
+                }
+            },
+            {
+                "type": "Finding",
+                "properties": {
+                    "id": "finding_14",
+                    "Finding_Labels": "No Finding",
+                    "Image_Index": "00000005_000.png"
+                }
+            },
+            {
+                "type": "Finding",
+                "properties": {
+                    "id": "finding_15",
+                    "Finding_Labels": "No Finding",
+                    "Image_Index": "00000005_001.png"
+                }
+            }
+        ],
+        "relationships": [
+            {
+                "type": "HAS_IMAGE",
+                "from": "patient_1",
+                "to": "image_1",
+                "start_node_label": "Patient",
+                "end_node_label": "MedicalImage",
+                "properties": {}
+            },
+            {
+                "type": "HAS_IMAGE",
+                "from": "patient_1",
+                "to": "image_2",
+                "start_node_label": "Patient",
+                "end_node_label": "MedicalImage",
+                "properties": {}
+            },
+            {
+                "type": "HAS_IMAGE",
+                "from": "patient_1",
+                "to": "image_3",
+                "start_node_label": "Patient",
+                "end_node_label": "MedicalImage",
+                "properties": {}
+            },
+            {
+                "type": "HAS_IMAGE",
+                "from": "patient_2",
+                "to": "image_4",
+                "start_node_label": "Patient",
+                "end_node_label": "MedicalImage",
+                "properties": {}
+            },
+            {
+                "type": "HAS_IMAGE",
+                "from": "patient_3",
+                "to": "image_5",
+                "start_node_label": "Patient",
+                "end_node_label": "MedicalImage",
+                "properties": {}
+            },
+            {
+                "type": "HAS_IMAGE",
+                "from": "patient_3",
+                "to": "image_6",
+                "start_node_label": "Patient",
+                "end_node_label": "MedicalImage",
+                "properties": {}
+            },
+            {
+                "type": "HAS_IMAGE",
+                "from": "patient_3",
+                "to": "image_7",
+                "start_node_label": "Patient",
+                "end_node_label": "MedicalImage",
+                "properties": {}
+            },
+            {
+                "type": "HAS_IMAGE",
+                "from": "patient_3",
+                "to": "image_8",
+                "start_node_label": "Patient",
+                "end_node_label": "MedicalImage",
+                "properties": {}
+            },
+            {
+                "type": "HAS_IMAGE",
+                "from": "patient_3",
+                "to": "image_9",
+                "start_node_label": "Patient",
+                "end_node_label": "MedicalImage",
+                "properties": {}
+            },
+            {
+                "type": "HAS_IMAGE",
+                "from": "patient_3",
+                "to": "image_10",
+                "start_node_label": "Patient",
+                "end_node_label": "MedicalImage",
+                "properties": {}
+            },
+            {
+                "type": "HAS_IMAGE",
+                "from": "patient_3",
+                "to": "image_11",
+                "start_node_label": "Patient",
+                "end_node_label": "MedicalImage",
+                "properties": {}
+            },
+            {
+                "type": "HAS_IMAGE",
+                "from": "patient_3",
+                "to": "image_12",
+                "start_node_label": "Patient",
+                "end_node_label": "MedicalImage",
+                "properties": {}
+            },
+            {
+                "type": "HAS_IMAGE",
+                "from": "patient_4",
+                "to": "image_13",
+                "start_node_label": "Patient",
+                "end_node_label": "MedicalImage",
+                "properties": {}
+            },
+            {
+                "type": "HAS_IMAGE",
+                "from": "patient_5",
+                "to": "image_14",
+                "start_node_label": "Patient",
+                "end_node_label": "MedicalImage",
+                "properties": {}
+            },
+            {
+                "type": "HAS_IMAGE",
+                "from": "patient_5",
+                "to": "image_15",
+                "start_node_label": "Patient",
+                "end_node_label": "MedicalImage",
+                "properties": {}
+            },
+            {
+                "type": "HAS_FINDING",
+                "from": "image_1",
+                "to": "finding_1",
+                "start_node_label": "MedicalImage",
+                "end_node_label": "Finding",
+                "properties": {}
+            },
+            {
+                "type": "HAS_FINDING",
+                "from": "image_2",
+                "to": "finding_2",
+                "start_node_label": "MedicalImage",
+                "end_node_label": "Finding",
+                "properties": {}
+            },
+            {
+                "type": "HAS_FINDING",
+                "from": "image_3",
+                "to": "finding_3",
+                "start_node_label": "MedicalImage",
+                "end_node_label": "Finding",
+                "properties": {}
+            },
+            {
+                "type": "HAS_FINDING",
+                "from": "image_4",
+                "to": "finding_4",
+                "start_node_label": "MedicalImage",
+                "end_node_label": "Finding",
+                "properties": {}
+            },
+            {
+                "type": "HAS_FINDING",
+                "from": "image_5",
+                "to": "finding_5",
+                "start_node_label": "MedicalImage",
+                "end_node_label": "Finding",
+                "properties": {}
+            },
+            {
+                "type": "HAS_FINDING",
+                "from": "image_6",
+                "to": "finding_6",
+                "start_node_label": "MedicalImage",
+                "end_node_label": "Finding",
+                "properties": {}
+            },
+            {
+                "type": "HAS_FINDING",
+                "from": "image_7",
+                "to": "finding_7",
+                "start_node_label": "MedicalImage",
+                "end_node_label": "Finding",
+                "properties": {}
+            },
+            {
+                "type": "HAS_FINDING",
+                "from": "image_8",
+                "to": "finding_8",
+                "start_node_label": "MedicalImage",
+                "end_node_label": "Finding",
+                "properties": {}
+            },
+            {
+                "type": "HAS_FINDING",
+                "from": "image_9",
+                "to": "finding_9",
+                "start_node_label": "MedicalImage",
+                "end_node_label": "Finding",
+                "properties": {}
+            },
+            {
+                "type": "HAS_FINDING",
+                "from": "image_10",
+                "to": "finding_10",
+                "start_node_label": "MedicalImage",
+                "end_node_label": "Finding",
+                "properties": {}
+            },
+            {
+                "type": "HAS_FINDING",
+                "from": "image_11",
+                "to": "finding_11",
+                "start_node_label": "MedicalImage",
+                "end_node_label": "Finding",
+                "properties": {}
+            },
+            {
+                "type": "HAS_FINDING",
+                "from": "image_12",
+                "to": "finding_12",
+                "start_node_label": "MedicalImage",
+                "end_node_label": "Finding",
+                "properties": {}
+            },
+            {
+                "type": "HAS_FINDING",
+                "from": "image_13",
+                "to": "finding_13",
+                "start_node_label": "MedicalImage",
+                "end_node_label": "Finding",
+                "properties": {}
+            },
+            {
+                "type": "HAS_FINDING",
+                "from": "image_14",
+                "to": "finding_14",
+                "start_node_label": "MedicalImage",
+                "end_node_label": "Finding",
+                "properties": {}
+            },
+            {
+                "type": "HAS_FINDING",
+                "from": "image_15",
+                "to": "finding_15",
+                "start_node_label": "MedicalImage",
+                "end_node_label": "Finding",
+                "properties": {}
+            }
+        ]
+    }
+}
+```

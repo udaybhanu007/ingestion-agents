@@ -65,7 +65,7 @@ async def test_box_file_ingestion():
         from agents.planner_agent import PlannerAgent
         from agents.execution_agent import ExecutionAgent
 
-        doc_uri = "azure://rag-agents-container/ARXIV_V5_CHESTXRAY.pdf"
+        doc_uri = "azure://rag-agents-container/Data_Entry_2017-small.csv"
         metadata = {
             "document_source": "box",
             "document_type": "txt",

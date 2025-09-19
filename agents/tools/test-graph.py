@@ -221,77 +221,118 @@ class GraphIngestionTool:
         try:
             self.logger.info("Starting LLM schema discovery and entity extraction...")
             
-            # Enhanced prompt for combined schema discovery and entity extraction
+            # Enhanced comprehensive prompt for generic schema discovery and entity extraction
             enhanced_prompt = f"""
-            Analyze the following medical imaging data and perform both schema discovery and entity extraction:
+            You are an expert data analyst and knowledge graph architect. Analyze the provided content and perform comprehensive schema discovery and entity extraction for knowledge graph construction.
+
+            CONTENT ANALYSIS INSTRUCTIONS:
+            1. First, identify the domain and data type (medical, business, technical, research, etc.)
+            2. Detect data format (CSV, JSON, text, structured records, etc.)
+            3. Identify key entities, their attributes, and relationships
+            4. Consider hierarchical, temporal, and categorical relationships
+            5. Handle multi-valued fields and complex data structures
+            6. Ensure comprehensive coverage of all data elements
 
             SCHEMA DISCOVERY TASK:
-            1. Identify entity types: MedicalImage, Patient, Finding
-            2. For MedicalImage: id, Image_Index, Finding_Labels, Patient_ID, Patient_Age, Patient_Gender, View_Position
-            3. For Patient: id, Patient_ID, Patient_Age, Patient_Gender
-            4. For Finding: id, Finding_Labels, Image_Index
-            5. Create relationships: Patient HAS_IMAGE MedicalImage, MedicalImage HAS_FINDING Finding
+            - Analyze ALL columns/fields in the data to identify distinct entity types
+            - Group related attributes under logical entity types
+            - Identify primary keys, foreign keys, and unique identifiers
+            - Detect categorical fields, temporal fields, and measurement fields
+            - Consider entity hierarchies and specialized entity types
+            - Map relationships between entities (1:1, 1:many, many:many)
+            - Include composite entities for complex relationships
+            - Consider temporal and sequential relationships
+            - Identify lookup/reference entities vs. main entities
 
-            ENTITY EXTRACTION TASK:
-            Extract ALL entities from the data. For each medical record, create:
-            - One MedicalImage entity with all imaging properties
-            - One Patient entity (deduplicated by Patient_ID)
-            - One Finding entity per finding label
-            - Relationships connecting them
+            ENTITY EXTRACTION GUIDELINES:
+            - Extract ALL data records as entities with complete attribute sets
+            - Handle multi-valued fields by creating separate entities or arrays
+            - Ensure proper entity deduplication using natural keys
+            - Create relationship instances for all detected connections
+            - Handle missing values appropriately
+            - Preserve data types and constraints
+            - Generate unique IDs for all entities and relationships
+
+            RELATIONSHIP DISCOVERY RULES:
+            - Direct references (foreign keys, IDs)
+            - Hierarchical relationships (parent-child, categories)
+            - Temporal relationships (sequences, versions, timelines)
+            - Compositional relationships (part-of, contains)
+            - Associative relationships (many-to-many via junction entities)
+            - Derived relationships (calculated, inferred)
+
+            DATA MODELING BEST PRACTICES:
+            - Use clear, descriptive entity and relationship names
+            - Normalize data to reduce redundancy
+            - Handle lookup tables and controlled vocabularies
+            - Consider entity specialization and generalization
+            - Model complex data types appropriately
+            - Ensure referential integrity in relationships
 
             Content to analyze:
-            {content[:5000]}
+            {content}
 
-            Return this EXACT JSON structure:
+            Return this EXACT JSON structure (do not modify the structure):
             {{
                 "schema_discovery": {{
-                    "confidence": 0.95,
+                    "confidence": <float_0_to_1>,
+                    "domain": "<detected_domain>",
+                    "data_format": "<detected_format>",
                     "entity_types": [
                         {{
-                            "type": "MedicalImage",
-                            "properties": ["id", "Image_Index", "Finding_Labels", "Patient_ID", "Patient_Age", "Patient_Gender", "View_Position"],
-                            "description": "Medical imaging record"
-                        }},
-                        {{
-                            "type": "Patient", 
-                            "properties": ["id", "Patient_ID", "Patient_Age", "Patient_Gender"],
-                            "description": "Patient information"
+                            "type": "<EntityTypeName>",
+                            "properties": ["id", "<property1>", "<property2>", "..."],
+                            "description": "<detailed_description>",
+                            "key_property": "<primary_identifier>",
+                            "entity_category": "<main|lookup|junction|temporal>"
                         }}
                     ],
                     "relationship_types": [
                         {{
-                            "type": "HAS_IMAGE",
-                            "start_entity": "Patient",
-                            "end_entity": "MedicalImage",
-                            "description": "Patient has medical images"
+                            "type": "<RELATIONSHIP_NAME>",
+                            "start_entity": "<StartEntityType>",
+                            "end_entity": "<EndEntityType>",
+                            "description": "<relationship_description>",
+                            "cardinality": "<1:1|1:many|many:many>",
+                            "relationship_category": "<direct|hierarchical|temporal|compositional|associative>"
                         }}
                     ]
                 }},
                 "entity_extraction": {{
                     "entities": [
                         {{
-                            "type": "MedicalImage",
+                            "type": "<EntityTypeName>",
                             "properties": {{
-                                "id": "unique_id",
-                                "Image_Index": "value",
-                                "Finding_Labels": "value"
+                                "id": "<unique_identifier>",
+                                "<property1>": "<value1>",
+                                "<property2>": "<value2>"
                             }}
                         }}
                     ],
                     "relationships": [
                         {{
-                            "type": "HAS_IMAGE",
-                            "from": "patient_id",
-                            "to": "image_id",
-                            "start_node_label": "Patient",
-                            "end_node_label": "MedicalImage",
-                            "properties": {{}}
+                            "type": "<RELATIONSHIP_NAME>",
+                            "from": "<source_entity_id>",
+                            "to": "<target_entity_id>",
+                            "start_node_label": "<StartEntityType>",
+                            "end_node_label": "<EndEntityType>",
+                            "properties": {{
+                                "<rel_property1>": "<rel_value1>"
+                            }}
                         }}
                     ]
                 }}
             }}
             
-            IMPORTANT: Extract ALL records as entities, create proper relationships, ensure all entities have unique IDs.
+            CRITICAL REQUIREMENTS:
+            1. Extract ALL data records - do not sample or truncate
+            2. Create comprehensive entity types covering all data attributes
+            3. Establish ALL logical relationships between entities
+            4. Use consistent naming conventions (PascalCase for entities, UPPER_CASE for relationships)
+            5. Ensure all entities have unique IDs and all relationships are properly connected
+            6. Provide high confidence scores (>0.8) for well-structured data
+            7. Handle edge cases like missing values, duplicates, and data quality issues
+            8. Preserve semantic meaning and domain context in entity/relationship naming
             """
 
             # Make LLM request using existing infrastructure with retry logic
@@ -387,11 +428,32 @@ class GraphIngestionTool:
             if confidence < 0.7:
                 self.logger.warning(f"Low schema discovery confidence: {confidence:.2f}")
             
+            # Log additional schema discovery information
+            domain = schema_discovery.get("domain", "unknown")
+            data_format = schema_discovery.get("data_format", "unknown")
+            entity_types_count = len(schema_discovery.get("entity_types", []))
+            relationship_types_count = len(schema_discovery.get("relationship_types", []))
+            
+            self.logger.info(f"Schema Discovery Summary - Domain: {domain}, Format: {data_format}, "
+                           f"Entities: {entity_types_count}, Relationships: {relationship_types_count}")
+            
+            # Validate entity types have required fields
+            for entity_type in schema_discovery.get("entity_types", []):
+                if not entity_type.get("type") or not entity_type.get("properties"):
+                    self.logger.warning(f"Invalid entity type structure: {entity_type}")
+                    
+            # Validate relationship types have required fields
+            for rel_type in schema_discovery.get("relationship_types", []):
+                if not all(key in rel_type for key in ["type", "start_entity", "end_entity"]):
+                    self.logger.warning(f"Invalid relationship type structure: {rel_type}")
+
             return {
                 "success": True,
                 "schema_discovery": schema_discovery,
                 "entity_extraction": entity_extraction,
-                "combined_confidence": confidence
+                "combined_confidence": confidence,
+                "domain": domain,
+                "data_format": data_format
             }
             
         except json.JSONDecodeError as e:

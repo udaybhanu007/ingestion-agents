@@ -11,6 +11,8 @@ import sys
 import os
 import requests
 import re
+import time
+import csv
 from typing import Dict, Any, List, Optional
 from langchain_openai import AzureChatOpenAI
 from pydantic import SecretStr
@@ -684,31 +686,34 @@ class GraphIngestionTool:
         Ingest nodes using MCP Data Modeling server for query generation and MCP Cypher server for execution.
         """
         try:
-            # Ensure data_model is present in node for MCP request
-            node_with_data_model = dict(node)
-            if "data_model" not in node_with_data_model:
-                node_with_data_model["data_model"] = "auto"
+            node_label = node.get("label", "unknown")
+            
+            # Build proper Node structure for MCP call (based on documentation)
+            mcp_node = {
+                "label": node_label,
+                "properties": node.get("properties", []),
+                "key_property": node.get("key_property", {"name": "id", "type": "string"})
+            }
             
             # Step 1: Get node ingestion Cypher query from MCP Data Modeling server
-            # Minimal debug output for performance
-            self.logger.debug(f"Getting node query for {node_with_data_model.get('label', 'unknown')}")
+            self.logger.debug(f"Getting node query for {node_label}")
             
             query_result = self.make_mcp_request(
                 self.data_modeling_server_url,
                 "get_node_cypher_ingest_query",
-                {"node": node_with_data_model}
+                {"node": mcp_node}
             )
 
             if not query_result.get("success", False):
-                self.logger.error(f"Failed to get node query for {node.get('label', 'unknown')}: {query_result.get('error')}")
+                self.logger.error(f"Failed to get node query for {node_label}: {query_result.get('error')}")
                 return 0
 
             # Step 2: Extract Cypher query from MCP response
             cypher_query = self._extract_cypher_from_mcp_response(query_result.get("result"))
 
-            self.logger.debug(f"Generated Cypher for {node.get('label', 'unknown')}: {cypher_query[:100]}...")
+            self.logger.debug(f"Generated Cypher for {node_label}: {cypher_query[:100]}...")
             if not cypher_query:
-                self.logger.error(f"No valid Cypher query returned for node {node.get('label', 'unknown')}")
+                self.logger.error(f"No valid Cypher query returned for node {node_label}")
                 return 0
 
             # Only allow write queries (CREATE, MERGE, CALL, or UNWIND with MERGE/CREATE)
@@ -718,14 +723,14 @@ class GraphIngestionTool:
                 (query_upper.startswith("UNWIND") and ("MERGE" in query_upper or "CREATE" in query_upper))
             )
             if not is_write_query:
-                self.logger.warning(f"Skipping non-write Cypher query for node {node.get('label', 'unknown')}")
+                self.logger.warning(f"Skipping non-write Cypher query for node {node_label}")
                 return 0
 
             # Step 3: Prepare records for this node type
             records = self._prepare_node_records(node, entities_relationships.get("entities", []))
-            self.logger.debug(f"Prepared {len(records)} records for {node.get('label', 'unknown')}")
+            self.logger.debug(f"Prepared {len(records)} records for {node_label}")
             if not records:
-                self.logger.warning(f"No records to ingest for node {node.get('label', 'unknown')}")
+                self.logger.warning(f"No records to ingest for node {node_label}")
                 return 0
 
             # Step 4: Execute ingestion via MCP Cypher server using correct format
@@ -733,7 +738,7 @@ class GraphIngestionTool:
                 "query": cypher_query,
                 "params": {"records": records}  # Correct format as specified
             }
-            self.logger.debug(f"Executing MCP request for {node.get('label', 'unknown')} with {len(records)} records")
+            self.logger.debug(f"Executing MCP request for {node_label} with {len(records)} records")
             
             result = self.make_mcp_request(
                 self.cypher_server_url,
@@ -742,10 +747,10 @@ class GraphIngestionTool:
             )
 
             if result.get("success", False):
-                self.logger.info(f"Successfully ingested {len(records)} {node.get('label', 'unknown')} nodes")
+                self.logger.info(f"Successfully ingested {len(records)} {node_label} nodes")
                 return len(records)
             else:
-                self.logger.error(f"Node ingestion failed for {node.get('label', 'unknown')}: {result.get('error', 'Unknown error')}")
+                self.logger.error(f"Node ingestion failed for {node_label}: {result.get('error', 'Unknown error')}")
                 return 0
 
         except Exception as e:
@@ -754,15 +759,132 @@ class GraphIngestionTool:
 
     def _ingest_relationships_via_mcp(self, relationship: Dict[str, Any], entities_relationships: Dict[str, Any]) -> int:
         """
-        Ingest relationships using MCP servers with direct Cypher generation.
+        Ingest relationships using MCP Data Modeling server for query generation and MCP Cypher server for execution.
         """
         try:
-            # For now, bypass the Data Modeling server validation issues and create relationships directly
+            # Extract relationship details
             rel_type = relationship.get("type", "UNKNOWN")
             start_label = relationship.get("start_node_label", "Entity")
             end_label = relationship.get("end_node_label", "Entity")
             
             print(f"[INFO] Creating relationship {rel_type} from {start_label} to {end_label}")
+            
+            # Build proper data model structure for MCP call
+            data_model = {
+                "nodes": [
+                    {
+                        "label": start_label,
+                        "properties": [
+                            {"name": "id", "type": "string"}
+                        ],
+                        "key_property": {"name": "id", "type": "string"}
+                    },
+                    {
+                        "label": end_label,
+                        "properties": [
+                            {"name": "id", "type": "string"}
+                        ],
+                        "key_property": {"name": "id", "type": "string"}
+                    }
+                ],
+                "relationships": [
+                    {
+                        "type": rel_type,
+                        "start_node_label": start_label,
+                        "end_node_label": end_label,
+                        "properties": relationship.get("properties", [])
+                    }
+                ]
+            }
+            
+            # Step 1: Get relationship ingestion Cypher query from MCP Data Modeling server
+            # Using the correct parameter format from the documentation
+            self.logger.debug(f"Getting relationship query for {rel_type}")
+            
+            query_result = self.make_mcp_request(
+                self.data_modeling_server_url,
+                "get_relationship_cypher_ingest_query",
+                {
+                    "data_model": data_model,
+                    "relationship_type": rel_type,
+                    "relationship_start_node_label": start_label,
+                    "relationship_end_node_label": end_label
+                }
+            )
+            
+            # Enhanced debugging for MCP response
+            print(f"[DEBUG] MCP relationship query result for {rel_type}: success={query_result.get('success')}")
+            if not query_result.get("success", False):
+                print(f"[DEBUG] MCP error details: {query_result.get('error')}")
+                self.logger.error(f"Failed to get relationship query for {rel_type}: {query_result.get('error')}")
+                # Fallback to direct Cypher generation
+                return self._fallback_relationship_generation(relationship, entities_relationships)
+
+            # Step 2: Extract Cypher query from MCP response
+            cypher_query = self._extract_cypher_from_mcp_response(query_result.get("result"))
+
+            print(f"[DEBUG] Extracted Cypher query for {rel_type}: {cypher_query[:200] if cypher_query else 'None'}...")
+            self.logger.debug(f"Generated Cypher for {rel_type}: {cypher_query[:100]}...")
+            if not cypher_query:
+                print(f"[DEBUG] No Cypher query extracted from MCP response")
+                self.logger.error(f"No valid Cypher query returned for relationship {rel_type}")
+                # Fallback to direct Cypher generation
+                return self._fallback_relationship_generation(relationship, entities_relationships)
+
+            # Only allow write queries (CREATE, MERGE, CALL, or UNWIND with MERGE/CREATE)
+            query_upper = cypher_query.strip().upper()
+            is_write_query = (
+                query_upper.startswith(("CREATE", "MERGE", "CALL")) or
+                (query_upper.startswith("UNWIND") and ("MERGE" in query_upper or "CREATE" in query_upper))
+            )
+            if not is_write_query:
+                self.logger.warning(f"MCP query not suitable for {rel_type}, using fallback")
+                # Fallback to direct Cypher generation
+                return self._fallback_relationship_generation(relationship, entities_relationships)
+
+            # Step 3: Prepare records for this relationship type
+            records = self._prepare_relationship_records(relationship, entities_relationships.get("relationships", []))
+            self.logger.debug(f"Prepared {len(records)} records for {rel_type}")
+            if not records:
+                print(f"[INFO] No records to ingest for relationship {rel_type}")
+                return 0
+                
+            print(f"[INFO] Processing {len(records)} {rel_type} relationships")
+
+            # Step 4: Execute ingestion via MCP Cypher server using correct format
+            mcp_params = {
+                "query": cypher_query,
+                "params": {"records": records}  # Correct format as specified
+            }
+            self.logger.debug(f"Executing MCP request for {rel_type} with {len(records)} records")
+            
+            result = self.make_mcp_request(
+                self.cypher_server_url,
+                "write_neo4j_cypher",
+                mcp_params
+            )
+
+            if result.get("success", False):
+                self.logger.info(f"Successfully ingested {len(records)} {rel_type} relationships")
+                return len(records)
+            else:
+                self.logger.error(f"Relationship ingestion failed for {rel_type}: {result.get('error', 'Unknown error')}")
+                return 0
+
+        except Exception as e:
+            self.logger.error(f"Relationship ingestion via MCP failed for {relationship.get('type', 'unknown')}: {str(e)}")
+            return 0
+
+    def _fallback_relationship_generation(self, relationship: Dict[str, Any], entities_relationships: Dict[str, Any]) -> int:
+        """
+        Fallback method for relationship generation using direct Cypher when MCP query generation fails.
+        """
+        try:
+            rel_type = relationship.get("type", "UNKNOWN")
+            start_label = relationship.get("start_node_label", "Entity")
+            end_label = relationship.get("end_node_label", "Entity")
+            
+            print(f"[FALLBACK] Using direct Cypher generation for {rel_type}")
             
             # Prepare relationship records
             records = self._prepare_relationship_records(relationship, entities_relationships.get("relationships", []))
@@ -792,14 +914,14 @@ class GraphIngestionTool:
             )
 
             if result.get("success", False):
-                self.logger.info(f"Successfully ingested {len(records)} {rel_type} relationships")
+                self.logger.info(f"Successfully ingested {len(records)} {rel_type} relationships via fallback")
                 return len(records)
             else:
-                self.logger.error(f"Relationship ingestion failed for {rel_type}: {result.get('error', 'Unknown error')}")
+                self.logger.error(f"Relationship fallback ingestion failed for {rel_type}: {result.get('error', 'Unknown error')}")
                 return 0
 
         except Exception as e:
-            self.logger.error(f"Relationship ingestion via MCP failed for {relationship.get('type', 'unknown')}: {str(e)}")
+            self.logger.error(f"Relationship fallback generation failed for {relationship.get('type', 'unknown')}: {str(e)}")
             return 0
     
     def _generate_relationship_cypher(self, rel_type: str, start_label: str, end_label: str, records: List[Dict]) -> str:
@@ -1109,12 +1231,12 @@ def main():
 
     # Chunked ingestion: split summary_blocks into smaller batches to reduce LLM load 
     chunk_size = 15  # Reduced from 25 to improve LLM success rate
-    total_chunks = (len(summary_blocks) + chunk_size - 1) // chunk_size  # Process all chunks again
+    total_chunks = min(2, (len(summary_blocks) + chunk_size - 1) // chunk_size)  # Process only 2 chunks for testing
     all_results = []
-    print(f"FIXED: Processing Data_Entry_2017-small.csv for ingestion in {total_chunks} chunks (size: {chunk_size})...")
+    print(f"FINAL TEST: Processing Data_Entry_2017-small.csv for ingestion in {total_chunks} chunks (size: {chunk_size})...")
 
 
-    for i in range(0, len(summary_blocks), chunk_size):
+    for i in range(0, min(2 * chunk_size, len(summary_blocks)), chunk_size):
         chunk_blocks = summary_blocks[i:i+chunk_size]
         chunk_content = "\n".join(chunk_blocks)
         chunk_num = i//chunk_size+1

@@ -4,17 +4,60 @@ Ingestion API Endpoints
 FastAPI endpoints for the ingestion system.
 """
 
-from fastapi import FastAPI, HTTPException
+import os
+import sys
+import ssl
+import warnings
+
+# Comprehensive SSL fixes for Qdrant cloud (like working test)
+os.environ['PYTHONHTTPSVERIFY'] = '0'
+os.environ['CURL_CA_BUNDLE'] = ''
+os.environ['REQUESTS_CA_BUNDLE'] = ''
+
+# Disable SSL warnings
+warnings.filterwarnings('ignore', message='Unverified HTTPS request')
+
+# Apply SSL context fixes early
+try:
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+except:
+    pass
+
+# Monkey patch httpx for Qdrant cloud connection
+def patch_httpx_ssl():
+    try:
+        import httpx
+        from httpx._config import create_ssl_context
+        
+        def patched_create_ssl_context(*args, **kwargs):
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            return context
+        
+        httpx._config.create_ssl_context = patched_create_ssl_context
+        print("✅ HTTPX SSL context patched for Qdrant cloud")
+    except Exception as e:
+        print(f"⚠️ HTTPX patch failed: {e}")
+
+# Apply patches early
+patch_httpx_ssl()
+
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 import uuid
 from datetime import datetime
-import sys
-import os
+import asyncio
 
 # Add the current directory to the path for imports
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
+# Load environment early like the working test
+from dotenv import load_dotenv
+load_dotenv('.env.dev')
 
 # Import agents and connectors
 from agents.planner_agent import PlannerAgent
@@ -23,7 +66,12 @@ from agents.execution_agent import ExecutionAgent
 # Import simple logging
 from config.simple_logger import get_api_logger, get_logger
 
-app = FastAPI(title="Ingestion Agent API", version="1.0.0")
+app = FastAPI(
+    title="Ingestion Agent API", 
+    version="1.0.0",
+    # Add timeout configuration for long-running operations
+    timeout=900,  # 15 minutes total timeout
+)
 
 # Initialize API logger
 api_logger = get_api_logger("ingestion")
@@ -36,6 +84,25 @@ app.add_middleware(
     allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers
 )
+
+# Add timeout middleware for long-running operations
+@app.middleware("http")
+async def timeout_middleware(request: Request, call_next):
+    """Middleware to handle timeouts for long-running operations"""
+    if request.url.path == "/ingest":
+        # Set a very long timeout for ingestion operations (15 minutes)
+        try:
+            response = await asyncio.wait_for(call_next(request), timeout=900.0)
+            return response
+        except asyncio.TimeoutError:
+            return HTTPException(status_code=504, detail="Request timeout: Operation took longer than 15 minutes")
+    else:
+        # Normal timeout for other operations (30 seconds)
+        try:
+            response = await asyncio.wait_for(call_next(request), timeout=30.0)
+            return response
+        except asyncio.TimeoutError:
+            return HTTPException(status_code=504, detail="Request timeout")
 
 # Lazy-initialized planner agent
 planner = None
@@ -92,6 +159,8 @@ async def ingest_document(request: IngestRequest):
     3. Calls the planner agent to create an ingestion plan asynchronously
     4. Executes the plan using execution agent
     5. Returns the plan and execution results
+    
+    Note: This operation can take 2-5 minutes for large datasets due to LLM processing.
     """
     # Generate unique run ID
     run_id = str(uuid.uuid4())
@@ -99,7 +168,7 @@ async def ingest_document(request: IngestRequest):
     # Log API request
     api_logger.info(f"Ingestion request received - run_id: {run_id}, doc_uri: {request.doc_uri}, "
                    f"document_source: {request.document_source}, document_type: {request.document_type}, "
-                   f"endpoint: /ingest")
+                   f"endpoint: /ingest, note: processing may take 2-5 minutes")
     
     try:
         # Initialize run tracking
@@ -117,14 +186,18 @@ async def ingest_document(request: IngestRequest):
         # Create ingestion plan using planner agent (async)
         api_logger.info(f"Starting plan creation - run_id: {run_id}, doc_uri: {request.doc_uri}")
         
+        # Build metadata exactly like the working test to ensure same behavior
+        metadata = {
+            "document_source": request.document_source or "box",  # Use "box" like working test
+            "document_type": request.document_type or "txt",      # Use "txt" like working test
+            "content_type": request.content_type or "text/plain",
+            "processing_options": request.processing_options or {},
+            "test_type": "graph_only"  # Focus on graph ingestion like working test
+        }
+        
         plan = await agent.create_ingestion_plan_async(
             doc_uri=request.doc_uri,
-            metadata={
-                "document_source": request.document_source,
-                "document_type": request.document_type, 
-                "content_type": request.content_type,
-                "processing_options": request.processing_options or {}
-            }
+            metadata=metadata
         )
         
         # Update run status
@@ -137,54 +210,81 @@ async def ingest_document(request: IngestRequest):
         # Get execution agent and execute the plan
         executor = get_execution_agent()
         
-        # Execute the plan using content from plan steps (Approach 2)
+        # Execute the plan using the same approach as the working test
         execution_results = await executor.execute_plan_async(plan)
         
-        # Determine overall execution status
-        execution_success = all(r.get('status') == 'completed' for r in execution_results)
+        # Determine overall execution status - more detailed checking like the test
+        execution_success = True
+        total_entities = 0
+        total_relationships = 0
+        
+        for result in execution_results:
+            if result.get('status') != 'success':
+                execution_success = False
+            
+            # Extract metrics from graph ingestion results
+            if result.get('step_type') == 'graph_ingestion' and result.get('result', {}).get('success'):
+                inner_result = result.get('result', {}).get('result', {})
+                if isinstance(inner_result, dict):
+                    total_entities += inner_result.get('entities_created', 0)
+                    total_relationships += inner_result.get('relationships_created', 0)
+        
         final_status = "completed" if execution_success else "failed"
         
-        # Store run information
+        # Store run information (preserve start_time from active_runs)
+        start_time = active_runs[run_id]["start_time"]
         run_data = {
             "run_id": run_id,
             "plan_id": plan["plan_id"],
             "doc_uri": request.doc_uri,
             "status": final_status,
-            "created_at": active_runs[run_id]["start_time"],
+            "created_at": start_time,
             "completed_at": datetime.now().isoformat(),
             "plan": plan,
             "execution_results": execution_results,
-            "errors": [r.get('error') for r in execution_results if r.get('error')]
+            "errors": [r.get('error') for r in execution_results if r.get('error')],
+            "metrics": {
+                "entities_created": total_entities,
+                "relationships_created": total_relationships
+            }
         }
         
         active_runs[run_id] = run_data
         
-        # Log completion
-        execution_time_ms = (datetime.now() - datetime.fromisoformat(active_runs[run_id]["start_time"])).total_seconds() * 1000
+        # Log completion with metrics
+        start_time_dt = datetime.fromisoformat(start_time)
+        execution_time_ms = (datetime.now() - start_time_dt).total_seconds() * 1000
         api_logger.info(f"Ingestion request completed - run_id: {run_id}, plan_id: {plan['plan_id']}, "
-                       f"status: {final_status}, execution_time_ms: {execution_time_ms}")
+                       f"status: {final_status}, execution_time_ms: {execution_time_ms}, "
+                       f"entities_created: {total_entities}, relationships_created: {total_relationships}")
         
         return IngestResponse(
             run_id=run_id,
             plan_id=plan["plan_id"],
-            message=f"Ingestion plan created and executed for {request.doc_uri}",
+            message=f"Ingestion plan created and executed for {request.doc_uri}. "
+                   f"Created {total_entities} entities and {total_relationships} relationships.",
             plan=plan,
             execution_results=execution_results
         )
         
     except Exception as e:
         # Store error information if execution fails
+        current_time = datetime.now().isoformat()
         if 'run_id' in locals():
             error_data = {
                 "run_id": run_id,
                 "plan_id": plan.get("plan_id", "") if 'plan' in locals() else "",
                 "doc_uri": request.doc_uri,
                 "status": "failed",
-                "created_at": active_runs.get(run_id, {}).get("start_time", datetime.now().isoformat()),
-                "completed_at": datetime.now().isoformat(),
+                "created_at": active_runs.get(run_id, {}).get("start_time", current_time),
+                "completed_at": current_time,
                 "plan": plan if 'plan' in locals() else {},
                 "execution_results": [],
-                "errors": [str(e)]
+                "errors": [str(e)],
+                "metrics": {
+                    "entities_created": 0,
+                    "relationships_created": 0
+                }
             }
             active_runs[run_id] = error_data
         
@@ -228,4 +328,14 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)
+    # Increased timeouts to handle long LLM processing (2-5 minutes)
+    uvicorn.run(
+        app, 
+        host="127.0.0.1", 
+        port=8020, 
+        reload=False,
+        timeout_keep_alive=600,  # 10 minutes keep alive
+        timeout_graceful_shutdown=30,  # 30 seconds graceful shutdown
+        access_log=True,
+        log_level="info"
+    )

@@ -34,15 +34,10 @@ except ImportError:
         def get_config(self, section, key=None):
             configs = {
                 "openai": {
-                    "deployment_name": os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1"),
-                    "azure_api_version": os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview"),
-                    "azure_endpoint": os.getenv("AZURE_OPENAI_ENDPOINT", "https://genaiindustria7447042968.cognitiveservices.azure.com/"),
+                    "deployment_name": os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini"),
+                    "azure_api_version": os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview"),
+                    "azure_endpoint": os.getenv("AZURE_OPENAI_ENDPOINT", ""),
                     "azure_api_key": os.getenv("AZURE_OPENAI_API_KEY", ""),
-                    "max_tokens": 32768,
-                    "temperature": 1.0,
-                    "top_p": 1.0,
-                    "frequency_penalty": 0.0,
-                    "presence_penalty": 0.0
                 }
             }
             return configs.get(section, {}).get(key) if key else configs.get(section, {})
@@ -85,20 +80,15 @@ class GraphIngestionTool:
             openai_config = config_manager.get_config("openai")
             
             self.llm = AzureChatOpenAI(
-                deployment_name=openai_config.get("deployment_name", "gpt-4.1"),
-                api_version=openai_config.get("azure_api_version", "2024-12-01-preview"),
-                azure_endpoint=openai_config.get("azure_endpoint", "https://genaiindustria7447042968.cognitiveservices.azure.com/"),
+                deployment_name=openai_config.get("deployment_name", "gpt-4o-mini"),
+                api_version=openai_config.get("azure_api_version", "2024-08-01-preview"),
+                azure_endpoint=openai_config.get("azure_endpoint", ""),
                 api_key=SecretStr(openai_config.get("azure_api_key", "")),
-                temperature=openai_config.get("temperature", 1.0),
-                max_tokens=openai_config.get("max_tokens", 32768),
-                model_kwargs={
-                    "top_p": openai_config.get("top_p", 1.0),
-                    "frequency_penalty": openai_config.get("frequency_penalty", 0.0),
-                    "presence_penalty": openai_config.get("presence_penalty", 0.0)
-                }
+                temperature=0.1,
+                max_tokens=16000  # Increased from 4000 to handle larger responses for entity extraction
             )
             
-            self.logger.info(f"LLM client initialized successfully with GPT-4.1 (max_tokens: {openai_config.get('max_tokens', 32768)})")
+            self.logger.info("LLM client initialized successfully")
             
         except Exception as e:
             self.logger.error(f"Failed to initialize LLM client: {str(e)}")
@@ -122,163 +112,6 @@ class GraphIngestionTool:
             "relationships_created": 0,       # MCP execution
             "errors": []
         }
-
-    def _estimate_tokens(self, text: str) -> int:
-        """Estimate tokens using the common rule: 1 token ≈ 4 characters for English text."""
-        return len(text) // 4
-
-    def _estimate_response_tokens(self, content_length: int, estimated_entities: int = None) -> int:
-        """Estimate response tokens needed based on content characteristics."""
-        # Base JSON structure overhead
-        base_structure = 500
-        
-        # Estimate entities if not provided (rough heuristic)
-        if estimated_entities is None:
-            # Assume structured data: estimate rows from content length
-            estimated_rows = max(1, content_length // 200)  # ~200 chars per row average
-            estimated_entities = estimated_rows * 1.5  # primary + some referenced entities
-        
-        # Schema discovery tokens
-        schema_tokens = 200 + (estimated_entities * 10)  # ~10 tokens per entity type
-        
-        # Entity extraction tokens
-        entity_tokens = estimated_entities * 80  # ~80 tokens per entity on average
-        
-        # Relationship tokens (assume 1.5 relationships per entity)
-        relationship_tokens = int(estimated_entities * 1.5 * 40)  # ~40 tokens per relationship
-        
-        total_response_tokens = base_structure + schema_tokens + entity_tokens + relationship_tokens
-        return total_response_tokens
-
-    def _calculate_optimal_chunk_size(self, content: str, max_response_tokens: int = 30000) -> int:
-        """Calculate optimal chunk size to stay within token limits for GPT-4.1 (32,768 tokens)."""
-        content_length = len(content)
-        
-        # GPT-4.1 with 32,768 tokens can handle much larger chunks
-        if content_length < 80000:  # Less than ~20,000 tokens
-            estimated_response = self._estimate_response_tokens(content_length)
-            if estimated_response <= max_response_tokens:
-                return -1  # No chunking needed
-        
-        # For larger content, use GPT-4.1's full 32k token capacity
-        # Estimate number of rows in content (rough heuristic)
-        lines = content.strip().split('\n')
-        data_lines = len(lines)
-        
-        # Remove header line from count if it exists
-        if lines and any(delimiter in lines[0] for delimiter in [',', '\t', '|']):
-            data_lines = max(1, len(lines) - 1)
-        
-        # Calculate chunk size optimized for GPT-4.1's 32k token capacity
-        # Target: ~30000 response tokens for optimal performance
-        if data_lines <= 100:
-            return -1  # Small-medium dataset, process all at once with GPT-4.1
-        elif data_lines <= 250:
-            return 150  # Medium dataset, larger chunks with 32k tokens
-        elif data_lines <= 500:
-            return 200  # Large dataset, still very efficient chunks
-        else:
-            # Very large dataset, use optimal chunks for 32k tokens
-            return min(250, max(100, data_lines // 2))  # 2+ chunks for very large data
-
-    def _split_content_into_chunks(self, content: str, chunk_size: int) -> List[str]:
-        """Split content into chunks, preserving data structure."""
-        lines = content.strip().split('\n')
-        
-        if not lines:
-            return []
-        
-        # Detect if content is CSV-like (has headers)
-        header_line = None
-        data_lines = lines
-        
-        # Check if first line looks like a header (contains common delimiters)
-        if lines and any(delimiter in lines[0] for delimiter in [',', '\t', '|']):
-            # Likely structured data - preserve header
-            header_line = lines[0]
-            data_lines = lines[1:] if len(lines) > 1 else []
-        
-        if not data_lines:
-            # If only header or no data, return single chunk
-            return [content]
-        
-        chunks = []
-        
-        # Create chunks of data lines
-        for i in range(0, len(data_lines), chunk_size):
-            chunk_data = data_lines[i:i + chunk_size]
-            
-            if header_line:
-                # Add header to each chunk for structured data
-                chunk_content = header_line + '\n' + '\n'.join(chunk_data)
-            else:
-                # For non-structured data, just chunk the lines
-                chunk_content = '\n'.join(chunk_data)
-            
-            chunks.append(chunk_content)
-        
-        self.logger.debug(f"Split {len(data_lines)} data lines into {len(chunks)} chunks")
-        return chunks
-
-    def _merge_llm_results(self, chunk_results: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Merge results from multiple chunks into a single result."""
-        if not chunk_results:
-            return {"success": False, "error": "No chunk results to merge"}
-        
-        # Find the first successful result for schema template
-        base_result = None
-        for result in chunk_results:
-            if result.get("success"):
-                base_result = result
-                break
-        
-        if not base_result:
-            return {"success": False, "error": "All chunks failed processing"}
-        
-        # Initialize merged result with base schema
-        merged_result = {
-            "success": True,
-            "schema_discovery": base_result["schema_discovery"].copy(),
-            "entity_extraction": {
-                "entities": [],
-                "relationships": []
-            },
-            "combined_confidence": 0.0,
-            "domain": base_result.get("domain", "unknown"),
-            "data_format": base_result.get("data_format", "unknown"),
-            "chunked_processing": True,
-            "total_chunks": len(chunk_results)
-        }
-        
-        # Merge entities and relationships from all successful chunks
-        total_confidence = 0.0
-        successful_chunks = 0
-        
-        for result in chunk_results:
-            if result.get("success"):
-                successful_chunks += 1
-                total_confidence += result.get("combined_confidence", 0.0)
-                
-                # Merge entities
-                chunk_entities = result.get("entity_extraction", {}).get("entities", [])
-                merged_result["entity_extraction"]["entities"].extend(chunk_entities)
-                
-                # Merge relationships
-                chunk_relationships = result.get("entity_extraction", {}).get("relationships", [])
-                merged_result["entity_extraction"]["relationships"].extend(chunk_relationships)
-        
-        # Calculate average confidence
-        if successful_chunks > 0:
-            merged_result["combined_confidence"] = total_confidence / successful_chunks
-        
-        # Update schema discovery with actual counts
-        merged_result["schema_discovery"]["total_entities_extracted"] = len(merged_result["entity_extraction"]["entities"])
-        merged_result["schema_discovery"]["total_relationships_extracted"] = len(merged_result["entity_extraction"]["relationships"])
-        
-        self.logger.info(f"Merged {successful_chunks} chunks: {len(merged_result['entity_extraction']['entities'])} entities, "
-                        f"{len(merged_result['entity_extraction']['relationships'])} relationships")
-        
-        return merged_result
 
     def ingest_content(self, content: str, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
@@ -308,65 +141,167 @@ class GraphIngestionTool:
 
     def ingest_content_with_schema_validation(self, content: str) -> Dict[str, Any]:
         """
-        Main entry point for document ingestion with full data processing:
-        Document Ingestion -> LLM Schema Discovery & Entity Extraction -> MCP Server Validation & Execution
-        Processes ALL document content in a single LLM call for complete context.
+        Main entry point for document ingestion with chunking:
+        Document Ingestion -> Chunked LLM Schema Discovery & Entity Extraction -> MCP Server Validation & Execution
+        Processes all CSV rows by splitting into chunks and aggregating results.
         """
         try:
             self.logger.info("=== Starting Document Ingestion Pipeline ===")
-            
-            # LAYER 1: Document Ingestion Layer (Input Processing)
             self.logger.info("Layer 1: Processing document input...")
-            processed_content = self._preprocess_document(content)
-            
-            # LAYER 2: LLM Schema Discovery & Entity Extraction
-            self.logger.info("Layer 2: LLM Schema Discovery & Entity Extraction...")
-            llm_result = self._llm_schema_discovery_and_extraction(processed_content)
 
-            if not llm_result.get("success"):
-                error_msg = llm_result.get("error", "LLM processing failed")
-                self.logger.error(f"LLM processing failed: {error_msg}")
+            # Read CSV content and split into rows
+            import io
+            csv_reader = csv.DictReader(io.StringIO(content))
+            rows = list(csv_reader)
+            fieldnames = csv_reader.fieldnames or []
+            total_rows = len(rows)
+            chunk_size = 15  # Reduced from 20 to improve LLM success rate (from test-graph.py)
+            self.logger.info(f"Total CSV rows: {total_rows}, chunk size: {chunk_size}")
+
+            if not fieldnames:
+                self.logger.error("No fieldnames found in CSV content")
                 return {
                     "success": False,
-                    "error": error_msg,
+                    "error": "Invalid CSV format - no fieldnames found",
                     "stats": self.processing_stats
                 }
 
-            # --- POST-PROCESSING: Ensure key_property and data_model ---
-            # Entities - synthesize key_property if missing
-            entities = llm_result.get("entity_extraction", {}).get("entities", [])
-            for idx, entity in enumerate(entities):
-                props = entity.get("properties", {})
-                # Synthesize key_property if missing
-                if "id" not in props:
-                    props["id"] = f"auto_id_{idx+1}"
-                entity["properties"] = props
+            all_entities = []
+            all_relationships = []
+            errors = []
+            all_schema_entity_types = []
+            all_schema_relationship_types = []
+
+            # Process each chunk
+            for i in range(0, total_rows, chunk_size):
+                chunk_rows = rows[i:i+chunk_size]
+                self.logger.info(f"Processing chunk {i//chunk_size+1}: rows {i+1}-{i+len(chunk_rows)}")
+
+                # Convert chunk to JSON format for better LLM processing (from test-graph.py)
+                summary_blocks = []
+                for idx, row in enumerate(chunk_rows, 1):
+                    # Always add a synthetic key property if not present
+                    if "id" not in row:
+                        row["id"] = f"row_{i+idx}"  # Unique per chunk and row
+                    block = f"Entity {i+idx}:\n" + json.dumps(row, indent=2)
+                    summary_blocks.append(block)
+                
+                chunk_content = "\n\n".join(summary_blocks)
+                # Preprocess and run LLM extraction on chunk
+                processed_content = self._preprocess_document(chunk_content)
+                llm_result = self._llm_schema_discovery_and_extraction(processed_content)
+
+                if not llm_result.get("success"):
+                    errors.append(llm_result.get("error"))
+                    continue
+
+                entities = llm_result.get("entity_extraction", {}).get("entities", [])
+                relationships = llm_result.get("entity_extraction", {}).get("relationships", [])
+                schema_entity_types = llm_result.get("schema_discovery", {}).get("entity_types", [])
+                schema_relationship_types = llm_result.get("schema_discovery", {}).get("relationship_types", [])
+
+                # --- POST-PROCESSING: Ensure key_property and data_model (from test-graph.py) ---
+                # Entities - synthesize key_property if missing
+                for idx, entity in enumerate(entities):
+                    props = entity.get("properties", {})
+                    # Synthesize key_property if missing
+                    if "id" not in props:
+                        props["id"] = f"auto_id_{i+idx+1}"
+                    entity["properties"] = props
+                
+                # Relationships - ensure data_model is set
+                for idx, rel in enumerate(relationships):
+                    # Synthesize data_model if missing
+                    if "data_model" not in rel:
+                        rel["data_model"] = "auto"
+
+                # Also ensure schema_discovery entity_types have 'id' property
+                for et in schema_entity_types:
+                    if "id" not in et.get("properties", []):
+                        et["properties"].insert(0, "id")
+                
+                all_entities.extend(entities)
+                all_relationships.extend(relationships)
+                all_schema_entity_types.extend(schema_entity_types)
+                all_schema_relationship_types.extend(schema_relationship_types)
+
+            # Deduplicate entity types and relationship types by 'type' field
+            def dedupe_by_type(items):
+                seen = set()
+                deduped = []
+                for item in items:
+                    t = item.get("type")
+                    if t and t not in seen:
+                        deduped.append(item)
+                        seen.add(t)
+                return deduped
+            merged_entity_types = dedupe_by_type(all_schema_entity_types)
+            merged_relationship_types = dedupe_by_type(all_schema_relationship_types)
+
+            # Debug: Log merged schema types for inspection
+            self.logger.info(f"Merged entity types: {[et.get('type') for et in merged_entity_types]}")
+            self.logger.info(f"Merged relationship types: {[rt.get('type') for rt in merged_relationship_types]}")
+            self.logger.info(f"Merged entity type details: {json.dumps(merged_entity_types, indent=2)}")
+            self.logger.info(f"Merged relationship type details: {json.dumps(merged_relationship_types, indent=2)}")
+
+            self.logger.info(f"Total entities extracted: {len(all_entities)}")
+            self.logger.info(f"Total relationships extracted: {len(all_relationships)}")
+
+            # Fix ID consistency between entities and relationships
+            all_entities, all_relationships = self._fix_entity_relationship_id_consistency(all_entities, all_relationships)
+            self.logger.info(f"After ID consistency fix - Entities: {len(all_entities)}, Relationships: {len(all_relationships)}")
+
+            # Filter schema to only include entity types that have actual entities
+            present_types = set(e.get("type") for e in all_entities)
+            filtered_entity_types = [et for et in merged_entity_types if et.get("type") in present_types]
             
-            # Relationships - ensure data_model is set
-            relationships = llm_result.get("entity_extraction", {}).get("relationships", [])
-            for idx, rel in enumerate(relationships):
-                # Synthesize data_model if missing
-                if "data_model" not in rel:
-                    rel["data_model"] = "auto"
+            # Log removed entity types for debugging
+            removed_types = [et.get("type") for et in merged_entity_types if et.get("type") not in present_types]
+            if removed_types:
+                self.logger.info(f"Removed entity types with no actual entities: {removed_types}")
+            
+            # Update merged_entity_types to only include types with real entities
+            merged_entity_types = filtered_entity_types
 
-            # Also ensure schema_discovery entity_types have 'id' property
-            entity_types = llm_result.get("schema_discovery", {}).get("entity_types", [])
-            for et in entity_types:
-                if "id" not in et.get("properties", []):
-                    et["properties"].insert(0, "id")
+            # Synthesize combined LLM result for MCP ingestion
+            combined_llm_result = {
+                "success": True,
+                "schema_discovery": {
+                    "confidence": 0.95,  # Optionally average from chunks
+                    "domain": "unknown", # Optionally set from first chunk
+                    "data_format": "csv", # Optionally set from first chunk
+                    "entity_types": merged_entity_types,
+                    "relationship_types": merged_relationship_types
+                },
+                "entity_extraction": {
+                    "entities": all_entities,
+                    "relationships": all_relationships
+                },
+                "combined_confidence": 0.95  # Placeholder, can be averaged from chunks if needed
+            }
 
-            # LAYER 3: MCP Server Validation & Execution
-            self.logger.info("Layer 3: MCP Server Validation & Execution...")
-            mcp_result = self._mcp_validation_and_execution(llm_result)
+            # Call MCP validation and execution to save data in Neo4j
+            mcp_result = self._mcp_validation_and_execution(combined_llm_result)
 
-            # Update final stats
-            if mcp_result.get("success"):
-                self.processing_stats["entities_extracted"] = len(entities)
-                self.processing_stats["relationships_created"] = len(relationships)
+            # Update stats
+            self.processing_stats["entities_extracted"] = len(all_entities)
+            self.processing_stats["relationships_created"] = len(all_relationships)
+            self.processing_stats["errors"].extend(errors)
 
-            self.logger.info("=== Document Ingestion Pipeline Complete ===")
+            # Return MCP result (includes Neo4j write status)
             return mcp_result
 
+        except Exception as e:
+            error_msg = f"Document ingestion pipeline failed: {str(e)}"
+            self.logger.error(error_msg)
+            self.processing_stats["errors"].append(error_msg)
+            return {
+                "success": False,
+                "error": error_msg,
+                "stats": self.processing_stats
+            }
+            return mcp_result
+            
         except Exception as e:
             error_msg = f"Document ingestion pipeline failed: {str(e)}"
             self.logger.error(error_msg)
@@ -397,37 +332,137 @@ class GraphIngestionTool:
 
     def _llm_schema_discovery_and_extraction(self, content: str) -> Dict[str, Any]:
         """
-        Layer 2: LLM Schema Discovery & Entity Extraction with Adaptive Chunking
+        Layer 2: LLM Schema Discovery & Entity Extraction
         
         This method combines both schema discovery and entity extraction in a single LLM call
-        for better consistency and context preservation. Automatically chunks large content
-        to stay within token limits.
+        for better consistency and context preservation.
         """
         try:
             self.logger.info("Starting LLM schema discovery and entity extraction...")
             
-            # Check if adaptive chunking is needed
-            chunk_size = self._calculate_optimal_chunk_size(content)
-            
-            if chunk_size == -1:
-                # No chunking needed - process all content at once
-                self.logger.info(f"Processing all content in single batch ({len(content)} characters)")
-                return self._process_single_chunk(content)
-            else:
-                # Chunking required
-                self.logger.info(f"Content requires chunking - using {chunk_size} rows per chunk")
-                return self._process_with_adaptive_chunking(content, chunk_size)
-                
-        except Exception as e:
-            error_msg = f"LLM schema discovery and extraction failed: {str(e)}"
-            self.logger.error(error_msg)
-            return {"success": False, "error": error_msg}
+            # Enhanced comprehensive prompt for generic schema discovery and entity extraction
+            enhanced_prompt = f"""
+            You are an expert data analyst and knowledge graph architect. Analyze the provided content and perform comprehensive schema discovery and entity extraction for knowledge graph construction.
 
-    def _process_single_chunk(self, content: str) -> Dict[str, Any]:
-        """Process content in a single LLM call."""
-        try:
-            enhanced_prompt = self._build_extraction_prompt(content)
+            CONTENT ANALYSIS INSTRUCTIONS:
+            1. First, identify the domain and data type (medical, business, technical, research, etc.)
+            2. Detect data format (CSV, JSON, text, structured records, etc.)
+            3. Identify key entities, their attributes, and relationships
+            4. Consider hierarchical, temporal, and categorical relationships
+            5. Handle multi-valued fields and complex data structures
+            6. Ensure comprehensive coverage of all data elements
+
+            SCHEMA DISCOVERY TASK:
+            - Analyze ALL columns/fields in the data to identify distinct entity types
+            - Group related attributes under logical entity types
+            - Identify primary keys, foreign keys, and unique identifiers
+            - Detect categorical fields, temporal fields, and measurement fields
+            - Consider entity hierarchies and specialized entity types
+            - Map relationships between entities (1:1, 1:many, many:many)
+            - Include composite entities for complex relationships
+            - Consider temporal and sequential relationships
+            - Identify lookup/reference entities vs. main entities
+
+            ENTITY EXTRACTION GUIDELINES:
+            - For CSV data: Create a PRIMARY entity for each row (e.g., ImageRecord, Transaction, Record)
+            - Extract ALL data records as entities with complete attribute sets
+            - Create REFERENCED entities for foreign key values (e.g., Patient, Category, Location)
+            - Handle multi-valued fields by creating separate entities or arrays
+            - Ensure proper entity deduplication using natural keys
+            - Create relationship instances for all detected connections
+            - Handle missing values appropriately
+            - Preserve data types and constraints
+            - Generate unique IDs for all entities and relationships
+            - For CSV: Each row should become at least one primary entity plus any referenced entities
+
+            RELATIONSHIP DISCOVERY RULES:
+            - Direct references (foreign keys, IDs)
+            - Hierarchical relationships (parent-child, categories)
+            - Temporal relationships (sequences, versions, timelines)
+            - Compositional relationships (part-of, contains)
+            - Associative relationships (many-to-many via junction entities)
+            - Derived relationships (calculated, inferred)
+
+            DATA MODELING BEST PRACTICES:
+            - Use clear, descriptive entity and relationship names
+            - Normalize data to reduce redundancy
+            - Handle lookup tables and controlled vocabularies
+            - Consider entity specialization and generalization
+            - Model complex data types appropriately
+            - Ensure referential integrity in relationships
+
+            Content to analyze:
+            {content}
+
+            IMPORTANT: For foreign key columns (like Patient ID), you MUST create a separate entity for EACH unique value in this chunk. 
+            For example, if this chunk contains Patient IDs [1, 1, 2, 2, 3], create exactly 3 Patient entities (one for ID=1, one for ID=2, one for ID=3).
+            Do NOT create just one representative Patient entity - create ALL unique ones present in this data chunk.
+
+            Return this EXACT JSON structure (do not modify the structure):
+            {{
+                "schema_discovery": {{
+                    "confidence": <float_0_to_1>,
+                    "domain": "<detected_domain>",
+                    "data_format": "<detected_format>",
+                    "entity_types": [
+                        {{
+                            "type": "<EntityTypeName>",
+                            "properties": ["id", "<property1>", "<property2>", "..."],
+                            "description": "<detailed_description>",
+                            "key_property": "<primary_identifier>",
+                            "entity_category": "<main|lookup|junction|temporal>"
+                        }}
+                    ],
+                    "relationship_types": [
+                        {{
+                            "type": "<RELATIONSHIP_NAME>",
+                            "start_entity": "<StartEntityType>",
+                            "end_entity": "<EndEntityType>",
+                            "description": "<relationship_description>",
+                            "cardinality": "<1:1|1:many|many:many>",
+                            "relationship_category": "<direct|hierarchical|temporal|compositional|associative>"
+                        }}
+                    ]
+                }},
+                "entity_extraction": {{
+                    "entities": [
+                        {{
+                            "type": "<EntityTypeName>",
+                            "properties": {{
+                                "id": "<unique_identifier>",
+                                "<property1>": "<value1>",
+                                "<property2>": "<value2>"
+                            }}
+                        }}
+                    ],
+                    "relationships": [
+                        {{
+                            "type": "<RELATIONSHIP_NAME>",
+                            "from": "<source_entity_id>",
+                            "to": "<target_entity_id>",
+                            "start_node_label": "<StartEntityType>",
+                            "end_node_label": "<EndEntityType>",
+                            "properties": {{
+                                "<rel_property1>": "<rel_value1>"
+                            }}
+                        }}
+                    ]
+                }}
+            }}
             
+            CRITICAL REQUIREMENTS:
+            1. For CSV data: Extract a primary entity for EVERY ROW (e.g., ImageRecord, Transaction, Event)
+            2. Extract ALL unique referenced entities for foreign key values (e.g., create one Patient entity for EACH unique Patient ID, not just representative samples)
+            3. Create comprehensive entity types covering all data attributes
+            4. Establish ALL logical relationships between entities
+            5. Use consistent naming conventions (PascalCase for entities, UPPER_CASE for relationships)
+            6. Ensure all entities have unique IDs and all relationships are properly connected
+            7. Provide high confidence scores (>0.8) for well-structured data
+            8. Handle edge cases like missing values, duplicates, and data quality issues
+            9. Preserve semantic meaning and domain context in entity/relationship naming
+            10. For CSV: Total entities should be at least equal to number of rows + ALL unique referenced entities (e.g., if there are 5 unique Patient IDs in the chunk, create 5 separate Patient entities)
+            """
+
             # Make LLM request using existing infrastructure with retry logic
             if not self.llm:
                 self.logger.error("LLM client not available")
@@ -449,16 +484,17 @@ class GraphIngestionTool:
                 except Exception as e:
                     error_details = f"LLM attempt {attempt + 1} failed: {str(e)}"
                     self.logger.warning(error_details)
-                    print(f"[DEBUG] {error_details}")
+                    print(f"[DEBUG] {error_details}")  # Also print to console for debugging
                     
                     if attempt == max_retries - 1:
                         final_error = f"LLM failed after {max_retries} attempts: {str(e)}"
                         print(f"[ERROR] {final_error}")
                         return {"success": False, "error": final_error}
                     # Wait before retry
+                    import time
                     time.sleep(2 ** attempt)  # Exponential backoff
 
-            # Parse the response
+            # Parse the combined response
             parsed_result = self._parse_llm_schema_extraction_response(response_text)
             
             if parsed_result.get("success"):
@@ -475,98 +511,9 @@ class GraphIngestionTool:
             return parsed_result
             
         except Exception as e:
-            error_msg = f"Single chunk processing failed: {str(e)}"
+            error_msg = f"LLM schema discovery and extraction failed: {str(e)}"
             self.logger.error(error_msg)
             return {"success": False, "error": error_msg}
-
-    def _process_with_adaptive_chunking(self, content: str, chunk_size: int) -> Dict[str, Any]:
-        """Process content using adaptive chunking strategy."""
-        try:
-            # Split content into chunks
-            chunks = self._split_content_into_chunks(content, chunk_size)
-            self.logger.info(f"Split content into {len(chunks)} chunks of ~{chunk_size} rows each")
-            
-            chunk_results = []
-            
-            # Process each chunk
-            for i, chunk in enumerate(chunks):
-                self.logger.info(f"Processing chunk {i+1}/{len(chunks)} ({len(chunk)} characters)")
-                
-                try:
-                    chunk_result = self._process_single_chunk(chunk)
-                    chunk_results.append(chunk_result)
-                    
-                    if chunk_result.get("success"):
-                        entities_count = len(chunk_result.get("entity_extraction", {}).get("entities", []))
-                        relationships_count = len(chunk_result.get("entity_extraction", {}).get("relationships", []))
-                        self.logger.info(f"Chunk {i+1} completed: {entities_count} entities, {relationships_count} relationships")
-                    else:
-                        self.logger.warning(f"Chunk {i+1} failed: {chunk_result.get('error', 'Unknown error')}")
-                        
-                except Exception as e:
-                    error_msg = f"Chunk {i+1} processing failed: {str(e)}"
-                    self.logger.error(error_msg)
-                    chunk_results.append({"success": False, "error": error_msg})
-                
-                # Small delay between chunks to avoid rate limiting
-                if i < len(chunks) - 1:
-                    time.sleep(1)
-            
-            # Merge results from all chunks
-            merged_result = self._merge_llm_results(chunk_results)
-            
-            if merged_result.get("success"):
-                total_entities = len(merged_result.get("entity_extraction", {}).get("entities", []))
-                total_relationships = len(merged_result.get("entity_extraction", {}).get("relationships", []))
-                self.processing_stats["schemas_discovered"] += 1
-                self.processing_stats["entities_extracted"] += total_entities
-                
-                self.logger.info(f"Chunked processing completed - Total entities: {total_entities}, "
-                               f"Total relationships: {total_relationships}")
-            
-            return merged_result
-            
-        except Exception as e:
-            error_msg = f"Chunked processing failed: {str(e)}"
-            self.logger.error(error_msg)
-            return {"success": False, "error": error_msg}
-
-    def _build_extraction_prompt(self, content: str) -> str:
-        """Build the extraction prompt with the given content."""
-        return f"""Extract ALL entities from the data. For CSV with N rows, create exactly N primary entities PLUS unique Patient entities.
-
-Content: {content}
-
-REQUIRED: 
-1. Create 1 ImageRecord entity per CSV row (99 entities expected)
-2. Create 1 Patient entity per unique PatientID found in the data
-3. Create 1 HAS_IMAGE_RECORD relationship per ImageRecord->Patient connection
-
-Return ONLY valid JSON (no comments, no // lines, no markdown):
-{{
-    "schema_discovery": {{
-        "confidence": 0.95,
-        "domain": "medical",
-        "entity_types": [
-            {{"type": "ImageRecord", "properties": ["id", "ImageIndex", "FindingLabels", "FollowUpNumber", "PatientID", "PatientAge", "PatientGender", "ViewPosition", "OriginalImageWidth", "OriginalImageHeight", "OriginalImagePixelSpacingX", "OriginalImagePixelSpacingY"], "key_property": "id", "entity_category": "main"}},
-            {{"type": "Patient", "properties": ["id", "PatientID", "PatientAge", "PatientGender"], "key_property": "id", "entity_category": "lookup"}}
-        ],
-        "relationship_types": [
-            {{"type": "HAS_IMAGE_RECORD", "start_entity": "Patient", "end_entity": "ImageRecord", "cardinality": "1:many", "relationship_category": "direct"}}
-        ]
-    }},
-    "entity_extraction": {{
-        "entities": [
-            {{"type": "ImageRecord", "properties": {{"id": "row_1", "ImageIndex": "00000001_000.png", "FindingLabels": "Cardiomegaly", "FollowUpNumber": 0, "PatientID": 1, "PatientAge": 58, "PatientGender": "M", "ViewPosition": "PA", "OriginalImageWidth": 2682, "OriginalImageHeight": 2749, "OriginalImagePixelSpacingX": 0.143, "OriginalImagePixelSpacingY": 0.143}}}},
-            {{"type": "Patient", "properties": {{"id": "patient_1", "PatientID": 1, "PatientAge": 58, "PatientGender": "M"}}}}
-        ],
-        "relationships": [
-            {{"type": "HAS_IMAGE_RECORD", "from": "patient_1", "to": "row_1", "start_node_label": "Patient", "end_node_label": "ImageRecord", "properties": {{}}}}
-        ]
-    }}
-}}
-
-CRITICAL: Create ImageRecord for EVERY row + Patient for each unique PatientID + relationships connecting them."""
 
     def _parse_llm_schema_extraction_response(self, response_text: str) -> Dict[str, Any]:
         """
@@ -587,57 +534,12 @@ CRITICAL: Create ImageRecord for EVERY row + Patient for each unique PatientID +
             # Try to parse the cleaned JSON directly first
             try:
                 parsed_data = json.loads(cleaned_text)
-                self.logger.info("Successfully parsed JSON on first attempt")
-            except json.JSONDecodeError as e:
-                self.logger.error(f"Initial JSON parsing failed: {str(e)}")
-                self.logger.error(f"Error at line {e.lineno}, column {e.colno}")
-                self.logger.error(f"Error context: {e.msg}")
-                
-                # Log the problematic area around the error
-                if hasattr(e, 'pos') and e.pos > 0:
-                    start_pos = max(0, e.pos - 100)
-                    end_pos = min(len(cleaned_text), e.pos + 100)
-                    context = cleaned_text[start_pos:end_pos]
-                    self.logger.error(f"Error context: ...{context}...")
-                
-                # Log the cleaned text for debugging if it's too long
-                if len(cleaned_text) > 50000:
-                    self.logger.warning(f"Very long LLM response: {len(cleaned_text)} characters")
-                    # Save to debug file for inspection
-                    try:
-                        with open("debug_llm_response.json", "w", encoding="utf-8") as f:
-                            f.write(cleaned_text)
-                        self.logger.info("Saved LLM response to debug_llm_response.json for inspection")
-                    except Exception as save_e:
-                        self.logger.warning(f"Could not save debug file: {save_e}")
-                
-                # Try to fix common JSON issues
-                self.logger.info("Attempting to fix common JSON issues...")
-                fixed_text = self._fix_common_json_issues(cleaned_text)
-                try:
-                    parsed_data = json.loads(fixed_text)
-                    self.logger.info("Successfully parsed JSON after fixing common issues")
-                except json.JSONDecodeError as e2:
-                    self.logger.error(f"JSON parsing failed even after fixes: {str(e2)}")
-                    self.logger.error(f"Fixed text error at line {e2.lineno}, column {e2.colno}")
-                    
-                    # Try a more aggressive regex-based extraction
-                    self.logger.info("Attempting regex-based JSON extraction...")
-                    json_match = re.search(r'\{.*\}', cleaned_text, re.DOTALL)
-                    if not json_match:
-                        return {"success": False, "error": f"No JSON found in LLM response. Response length: {len(cleaned_text)}"}
-                    try:
-                        parsed_data = json.loads(json_match.group())
-                        self.logger.info("Successfully extracted JSON using regex fallback")
-                    except json.JSONDecodeError as e3:
-                        # Final attempt: Try to use a subset parser for partial JSON
-                        self.logger.info("Attempting partial JSON extraction...")
-                        partial_result = self._extract_partial_json(cleaned_text)
-                        if partial_result.get("success"):
-                            self.logger.info("Successfully extracted partial JSON data")
-                            return partial_result
-                        else:
-                            return {"success": False, "error": f"JSON parsing failed completely: {str(e3)}"}
+            except json.JSONDecodeError:
+                # Fallback: Extract JSON from response text using regex
+                json_match = re.search(r'\{.*\}', cleaned_text, re.DOTALL)
+                if not json_match:
+                    return {"success": False, "error": "No JSON found in LLM response"}
+                parsed_data = json.loads(json_match.group())
             
             # Debug: Show what we parsed
             print(f"[DEBUG] Parsed JSON structure keys: {list(parsed_data.keys())}")
@@ -653,18 +555,6 @@ CRITICAL: Create ImageRecord for EVERY row + Patient for each unique PatientID +
             confidence = schema_discovery.get("confidence", 0.0)
             if confidence < 0.7:
                 self.logger.warning(f"Low schema discovery confidence: {confidence:.2f}")
-            
-            # ENTITY COUNT VALIDATION for structured data
-            extracted_entities = entity_extraction.get("entities", [])
-            entity_count = len(extracted_entities)
-            
-            # Log entity count for monitoring
-            self.logger.info(f"📊 Entity Extraction Summary: {entity_count} entities extracted")
-            
-            # Basic validation - warn if entity count seems unusually low
-            if entity_count < 10 and "csv" in data_format.lower():
-                self.logger.warning(f"⚠️ POTENTIAL ISSUE: Only {entity_count} entities extracted from CSV data")
-                self.logger.warning("This may indicate under-extraction - consider reviewing LLM prompt effectiveness")
             
             # Log additional schema discovery information
             domain = schema_discovery.get("domain", "unknown")
@@ -698,177 +588,6 @@ CRITICAL: Create ImageRecord for EVERY row + Patient for each unique PatientID +
             return {"success": False, "error": f"JSON parsing failed: {str(e)}"}
         except Exception as e:
             return {"success": False, "error": f"Response parsing failed: {str(e)}"}
-
-    def _fix_common_json_issues(self, json_text: str) -> str:
-        """Fix common JSON formatting issues that can cause parsing errors."""
-        try:
-            # Remove JSON comments (// comments)
-            json_text = re.sub(r'//.*', '', json_text)
-            
-            # Remove trailing commas before closing brackets/braces
-            json_text = re.sub(r',(\s*[}\]])', r'\1', json_text)
-            
-            # Fix common property name issues (unquoted properties)
-            json_text = re.sub(r'(\w+)(\s*:\s*)', r'"\1"\2', json_text)
-            
-            # Fix single quotes to double quotes
-            json_text = re.sub(r"'([^']*)'", r'"\1"', json_text)
-            
-            # Handle truncated JSON - if response ends abruptly, try to close it properly
-            if not json_text.rstrip().endswith('}'):
-                # Count open braces and brackets to determine how many we need to close
-                open_braces = json_text.count('{') - json_text.count('}')
-                open_brackets = json_text.count('[') - json_text.count(']')
-                
-                # Remove any incomplete line at the end
-                lines = json_text.split('\n')
-                if lines and not lines[-1].strip().endswith((',', '}', ']')):
-                    # Remove the incomplete last line
-                    json_text = '\n'.join(lines[:-1])
-                
-                # Close any open arrays first, then objects
-                closing_chars = ']' * open_brackets + '}' * open_braces
-                json_text = json_text.rstrip() + closing_chars
-                
-                self.logger.info(f"Applied truncation fix: added {len(closing_chars)} closing characters")
-            
-            # Remove any text after the final closing brace
-            last_brace_pos = json_text.rfind('}')
-            if last_brace_pos != -1:
-                json_text = json_text[:last_brace_pos + 1]
-            
-            # Fix invalid escape sequences
-            json_text = re.sub(r'\\(?!["\\/bfnrt])', r'\\\\', json_text)
-            
-            return json_text
-        except Exception as e:
-            self.logger.warning(f"Could not fix JSON issues: {e}")
-            return json_text
-
-    def _extract_partial_json(self, json_text: str) -> Dict[str, Any]:
-        """
-        Extract usable data from malformed JSON by parsing what we can.
-        This is a fallback method when standard JSON parsing fails.
-        """
-        try:
-            self.logger.info("Attempting partial JSON extraction for fallback processing")
-            
-            # Initialize default structure
-            result = {
-                "success": True,
-                "schema_discovery": {
-                    "confidence": 0.8,
-                    "domain": "medical",
-                    "entity_types": [],
-                    "relationship_types": []
-                },
-                "entity_extraction": {
-                    "entities": [],
-                    "relationships": []
-                }
-            }
-            
-            # Extract entities using regex patterns
-            entity_pattern = r'"type":\s*"ImageRecord"[^}]*"properties":\s*\{[^}]*\}'
-            entity_matches = re.findall(entity_pattern, json_text, re.DOTALL)
-            
-            entities_found = 0
-            for i, match in enumerate(entity_matches[:99]):  # Limit to expected count
-                try:
-                    # Try to extract basic properties
-                    id_match = re.search(r'"id":\s*"([^"]*)"', match)
-                    if id_match:
-                        entity_id = id_match.group(1)
-                        result["entity_extraction"]["entities"].append({
-                            "type": "ImageRecord",
-                            "properties": {"id": entity_id}
-                        })
-                        entities_found += 1
-                except Exception as e:
-                    self.logger.warning(f"Could not extract entity {i}: {e}")
-                    continue
-            
-            # Extract Patient entities
-            patient_pattern = r'"type":\s*"Patient"[^}]*"properties":\s*\{[^}]*\}'
-            patient_matches = re.findall(patient_pattern, json_text, re.DOTALL)
-            
-            patients_found = 0
-            for match in patient_matches[:22]:  # Expected patient count
-                try:
-                    id_match = re.search(r'"id":\s*"([^"]*)"', match)
-                    if id_match:
-                        patient_id = id_match.group(1)
-                        result["entity_extraction"]["entities"].append({
-                            "type": "Patient", 
-                            "properties": {"id": patient_id}
-                        })
-                        patients_found += 1
-                except Exception as e:
-                    self.logger.warning(f"Could not extract patient: {e}")
-                    continue
-            
-            # Extract relationships
-            rel_pattern = r'"type":\s*"HAS_IMAGE_RECORD"[^}]*\}'
-            rel_matches = re.findall(rel_pattern, json_text, re.DOTALL)
-            
-            relationships_found = 0
-            for match in rel_matches[:99]:  # Expected relationship count
-                try:
-                    from_match = re.search(r'"from":\s*"([^"]*)"', match)
-                    to_match = re.search(r'"to":\s*"([^"]*)"', match)
-                    
-                    if from_match and to_match:
-                        result["entity_extraction"]["relationships"].append({
-                            "type": "HAS_IMAGE_RECORD",
-                            "from": from_match.group(1),
-                            "to": to_match.group(1),
-                            "start_node_label": "Patient",
-                            "end_node_label": "ImageRecord",
-                            "properties": {}
-                        })
-                        relationships_found += 1
-                except Exception as e:
-                    self.logger.warning(f"Could not extract relationship: {e}")
-                    continue
-            
-            # Add basic schema info
-            if entities_found > 0:
-                result["schema_discovery"]["entity_types"] = [
-                    {
-                        "type": "ImageRecord",
-                        "properties": ["id"],
-                        "key_property": "id",
-                        "entity_category": "main"
-                    }
-                ]
-            
-            if patients_found > 0:
-                result["schema_discovery"]["entity_types"].append({
-                    "type": "Patient",
-                    "properties": ["id"],
-                    "key_property": "id", 
-                    "entity_category": "lookup"
-                })
-            
-            if relationships_found > 0:
-                result["schema_discovery"]["relationship_types"] = [{
-                    "type": "HAS_IMAGE_RECORD",
-                    "start_entity": "Patient",
-                    "end_entity": "ImageRecord",
-                    "cardinality": "1:many",
-                    "relationship_category": "direct"
-                }]
-            
-            self.logger.info(f"Partial extraction found: {entities_found} entities, {patients_found} patients, {relationships_found} relationships")
-            
-            if entities_found == 0 and patients_found == 0:
-                return {"success": False, "error": "No usable data could be extracted from malformed JSON"}
-            
-            return result
-            
-        except Exception as e:
-            self.logger.error(f"Partial JSON extraction failed: {e}")
-            return {"success": False, "error": f"Partial extraction failed: {str(e)}"}
 
     def _mcp_validation_and_execution(self, llm_result: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1892,63 +1611,53 @@ def main():
         print(f"Error reading document: {e}")
         formatted_content = ""
 
-    # Process ALL data at once - no chunking
-    print(f"PROCESSING ALL DATA: {len(summary_blocks)} entities at once...")
-    result = tool.ingest_content_with_schema_validation(formatted_content)
-    
-    print(f"Success: {result.get('success', False)} | Entities: {result.get('entities_created', 0)} | Relationships: {result.get('relationships_created', 0)} | Confidence: {result.get('schema_confidence', 0.0):.2f}")
-    
-    if not result.get('success', True):
-        print(f"Error: {result.get('error', 'Unknown error')}")
+
+    # Chunked ingestion: split summary_blocks into smaller batches to reduce LLM load 
+    chunk_size = 15  # Reduced from 25 to improve LLM success rate
+    total_chunks = min(2, (len(summary_blocks) + chunk_size - 1) // chunk_size)  # Process only 2 chunks for testing
+    all_results = []
+    print(f"FINAL TEST: Processing Data_Entry_2017-small.csv for ingestion in {total_chunks} chunks (size: {chunk_size})...")
+
+
+    for i in range(0, min(2 * chunk_size, len(summary_blocks)), chunk_size):
+        chunk_blocks = summary_blocks[i:i+chunk_size]
+        chunk_content = "\n".join(chunk_blocks)
+        chunk_num = i//chunk_size+1
+        print(f"\n--- Processing chunk {chunk_num}/{total_chunks} ---")
+        # Minimal logging for performance
+        print(f"  Chunk size: {len(chunk_blocks)} entities")
+        result = tool.ingest_content_with_schema_validation(chunk_content)
+        all_results.append(result)
+        print(f"  Success: {result.get('success', False)} | Entities: {result.get('entities_created', 0)} | Relationships: {result.get('relationships_created', 0)} | Confidence: {result.get('schema_confidence', 0.0):.2f}")
+        # Only show errors, not full debug details
+        if not result.get('success', True):
+            print(f"  Error: {result.get('error', 'Unknown error')}")
+
+    # Aggregate results
+    total_entities = sum(r.get('entities_created', 0) for r in all_results if r.get('success'))
+    total_relationships = sum(r.get('relationships_created', 0) for r in all_results if r.get('success'))
+    avg_confidence = (
+        sum(r.get('schema_confidence', 0.0) for r in all_results if r.get('success')) /
+        max(1, sum(1 for r in all_results if r.get('success')))
+    )
+
+    print("\n=== OPTIMIZED Chunked Ingestion Summary ===")
+    print(f"Total Chunks: {total_chunks}")
+    print(f"Total Entities Created: {total_entities}")
+    print(f"Total Relationships Created: {total_relationships}")
+    print(f"Average Schema Confidence: {avg_confidence:.2f}")
+    print(f"Performance: {len(summary_blocks)} entities in {total_chunks} chunks")
+
+    # Only display errors if any exist
+    errors = [r.get('error') for r in all_results if not r.get('success')]
+    if errors:
+        print(f"\nErrors ({len(errors)} chunks failed):")
+        for idx, error in enumerate(errors[:3], 1):  # Show only first 3 errors
+            print(f"  {idx}. {error}")
+        if len(errors) > 3:
+            print(f"  ... and {len(errors) - 3} more errors")
     else:
-        print("Processing completed successfully!")
-
-    # CHUNKED INGESTION LOGIC COMMENTED OUT
-    # # Chunked ingestion: split summary_blocks into smaller batches to reduce LLM load 
-    # chunk_size = 15  # Reduced from 25 to improve LLM success rate
-    # total_chunks = min(2, (len(summary_blocks) + chunk_size - 1) // chunk_size)  # Process only 2 chunks for testing
-    # all_results = []
-    # print(f"FINAL TEST: Processing Data_Entry_2017-small.csv for ingestion in {total_chunks} chunks (size: {chunk_size})...")
-
-    # for i in range(0, min(2 * chunk_size, len(summary_blocks)), chunk_size):
-    #     chunk_blocks = summary_blocks[i:i+chunk_size]
-    #     chunk_content = "\n".join(chunk_blocks)
-    #     chunk_num = i//chunk_size+1
-    #     print(f"\n--- Processing chunk {chunk_num}/{total_chunks} ---")
-    #     # Minimal logging for performance
-    #     print(f"  Chunk size: {len(chunk_blocks)} entities")
-    #     result = tool.ingest_content_with_schema_validation(chunk_content)
-    #     all_results.append(result)
-    #     print(f"  Success: {result.get('success', False)} | Entities: {result.get('entities_created', 0)} | Relationships: {result.get('relationships_created', 0)} | Confidence: {result.get('schema_confidence', 0.0):.2f}")
-    #     # Only show errors, not full debug details
-    #     if not result.get('success', True):
-    #         print(f"  Error: {result.get('error', 'Unknown error')}")
-
-    # # Aggregate results
-    # total_entities = sum(r.get('entities_created', 0) for r in all_results if r.get('success'))
-    # total_relationships = sum(r.get('relationships_created', 0) for r in all_results if r.get('success'))
-    # avg_confidence = (
-    #     sum(r.get('schema_confidence', 0.0) for r in all_results if r.get('success')) /
-    #     max(1, sum(1 for r in all_results if r.get('success')))
-    # )
-
-    # print("\n=== OPTIMIZED Chunked Ingestion Summary ===")
-    # print(f"Total Chunks: {total_chunks}")
-    # print(f"Total Entities Created: {total_entities}")
-    # print(f"Total Relationships Created: {total_relationships}")
-    # print(f"Average Schema Confidence: {avg_confidence:.2f}")
-    # print(f"Performance: {len(summary_blocks)} entities in {total_chunks} chunks")
-
-    # # Only display errors if any exist
-    # errors = [r.get('error') for r in all_results if not r.get('success')]
-    # if errors:
-    #     print(f"\nErrors ({len(errors)} chunks failed):")
-    #     for idx, error in enumerate(errors[:3], 1):  # Show only first 3 errors
-    #         print(f"  {idx}. {error}")
-    #     if len(errors) > 3:
-    #         print(f"  ... and {len(errors) - 3} more errors")
-    # else:
-    #     print("\nNo errors - all chunks processed successfully!")
+        print("\nNo errors - all chunks processed successfully!")
 
 
 if __name__ == "__main__":

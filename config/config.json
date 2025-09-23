@@ -50,6 +50,17 @@
       "mcp_data_modeling_url": "http://127.0.0.1:8004/mcp/"
     }
   },
+  "openai": {
+    "deployment_name": "gpt-4.1",
+    "azure_api_version": "2024-12-01-preview",
+    "azure_endpoint": "https://genaiindustria7447042968.cognitiveservices.azure.com/",
+    "azure_api_key": "${AZURE_OPENAI_API_KEY}",
+    "max_tokens": 32768,
+    "temperature": 1.0,
+    "top_p": 1.0,
+    "frequency_penalty": 0.0,
+    "presence_penalty": 0.0
+  },
   "logging": {
     "level": "INFO",
     "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",

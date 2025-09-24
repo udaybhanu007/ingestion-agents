@@ -65,13 +65,13 @@ async def test_box_file_ingestion():
         from agents.planner_agent import PlannerAgent
         from agents.execution_agent import ExecutionAgent
 
-        doc_uri = "azure://rag-agents-container/Data_Entry_2017-small.csv"
+        doc_uri = "azure://rag-agents-container/Data_Entry_2017.csv"
         metadata = {
             "document_source": "box",
             "document_type": "txt",
             "content_type": "text/plain",
             "processing_options": {},
-            "test_type": "vector_only"  # Focus only on vector ingestion
+            "test_type": "graph_only"  # Focus on graph ingestion for nodes and relationships
         }
 
 

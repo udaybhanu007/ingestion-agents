@@ -351,13 +351,9 @@ class AzureConnector:
                     formatted_lines.append(" | ".join(row))
                     formatted_lines.append("=" * 50)
                 else:
-                    # Data rows
-                    if row_count < 100:  # Limit to first 100 rows for performance
-                        formatted_lines.append(f"Row {row_count + 1}: " + " | ".join(row))
+                    # Data rows - include ALL rows (chunking will be handled by graph tool)
+                    formatted_lines.append(f"Row {row_count + 1}: " + " | ".join(row))
                     row_count += 1
-            
-            if row_count > 100:
-                formatted_lines.append(f"\n... and {row_count - 100} more rows")
             
             formatted_lines.append(f"\n=== CSV SUMMARY ===")
             formatted_lines.append(f"Total rows: {row_count}")

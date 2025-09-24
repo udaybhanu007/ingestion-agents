@@ -90,12 +90,13 @@ app.add_middleware(
 async def timeout_middleware(request: Request, call_next):
     """Middleware to handle timeouts for long-running operations"""
     if request.url.path == "/ingest":
-        # Set a very long timeout for ingestion operations (15 minutes)
+        # Very long timeout for large file ingestion operations (30 minutes)
+        # This accommodates processing of very large files like 100K+ line CSVs
         try:
-            response = await asyncio.wait_for(call_next(request), timeout=900.0)
+            response = await asyncio.wait_for(call_next(request), timeout=1800.0)
             return response
         except asyncio.TimeoutError:
-            return HTTPException(status_code=504, detail="Request timeout: Operation took longer than 15 minutes")
+            return HTTPException(status_code=504, detail="Request timeout: Operation took longer than 30 minutes")
     else:
         # Normal timeout for other operations (30 seconds)
         try:

@@ -43,20 +43,13 @@ except ImportError:
         
         @property
         def max_content_length(self):
-            return int(os.getenv("MAX_CONTENT_LENGTH", "100000"))
+            return 50000
 
     config_manager = MockConfig()
     logger = logging.getLogger("graph_tool")
 
 
 class GraphIngestionTool:
-    @staticmethod
-    def _sanitize_property_name(prop_name: str) -> str:
-        """Sanitize property names for Neo4j compatibility (no spaces or special chars)."""
-        import re
-        # Replace spaces and non-alphanumeric characters with underscores
-        return re.sub(r'[^a-zA-Z0-9_]', '_', prop_name)
-
     """
     Complete Neo4j Graph Ingestion Tool implementing the hybrid architecture:
     Document Ingestion → LLM Schema Discovery & Entity Extraction → MCP Server Validation & Execution
@@ -405,51 +398,6 @@ Response:
                 "success": False,
                 "error": error_msg,
                 "stats": self.processing_stats
-            }
-
-    def ingest_content(self, content: str, metadata: Dict[str, Any] = None) -> Dict[str, Any]:
-        """
-        Simplified entry point for document ingestion compatible with execution agent.
-        
-        This method acts as a wrapper around ingest_content_with_schema_validation
-        to maintain compatibility with the execution agent interface.
-        
-        Args:
-            content: Document content to process
-            metadata: Optional metadata dict (for compatibility, currently unused)
-            
-        Returns:
-            Dict with ingestion results compatible with execution agent expectations
-        """
-        try:
-            # Log metadata if provided for debugging
-            if metadata:
-                self.logger.info(f"Graph ingestion with metadata: {metadata}")
-            
-            # Call the main ingestion method
-            result = self.ingest_content_with_schema_validation(content)
-            
-            # Transform result to match expected execution agent format
-            return {
-                "success": result.get("success", False),
-                "nodes_created": result.get("entities_created", 0),  # Map entities to nodes
-                "relationships_created": result.get("relationships_created", 0),
-                "entities_ingested": result.get("entities_created", 0),
-                "method": result.get("method", "mcp_cypher_write"),
-                "stats": result.get("stats", {}),
-                "error": result.get("error") if not result.get("success") else None,
-                "pipeline": result.get("pipeline", "document_ingestion → llm_discovery → mcp_execution")
-            }
-            
-        except Exception as e:
-            error_msg = f"Graph ingestion wrapper failed: {str(e)}"
-            self.logger.error(error_msg)
-            return {
-                "success": False,
-                "error": error_msg,
-                "nodes_created": 0,
-                "relationships_created": 0,
-                "entities_ingested": 0
             }
 
     def _preprocess_document(self, content: str) -> str:
@@ -1577,51 +1525,17 @@ Response:
             return ""
 
     def _extract_cypher_from_mcp_response(self, result_data: Any) -> Optional[str]:
-        """Extract Cypher query from various MCP response formats and sanitize property keys in SET n += {...}."""
+        """Extract Cypher query from various MCP response formats."""
         try:
-            import re
-            # Helper to sanitize property keys in SET n += {...} clauses
-            def sanitize_set_clause(match):
-                set_body = match.group(1)
-                # Split by commas not inside brackets
-                props = re.split(r',(?![^\[]*\])', set_body)
-                sanitized_props = []
-                for prop in props:
-                    if ':' in prop:
-                        key, value = prop.split(':', 1)
-                        key_stripped = key.strip()
-                        # Remove possible quotes
-                        key_unquoted = key_stripped.strip('"\'')
-                        sanitized_key = self._sanitize_property_name(key_unquoted)
-                        # Try to find the referenced record property and sanitize it
-                        value_stripped = value.strip()
-                        # Match record.<property> (with possible brackets)
-                        value_match = re.match(r'record\.([a-zA-Z0-9_\[\]#\- ]+)', value_stripped)
-                        if value_match:
-                            orig_value_key = value_match.group(1)
-                            sanitized_value_key = self._sanitize_property_name(orig_value_key)
-                            sanitized_value = f"record.{sanitized_value_key}"
-                            sanitized_props.append(f"{sanitized_key}: {sanitized_value}")
-                        else:
-                            sanitized_props.append(f"{sanitized_key}: {value_stripped}")
-                    else:
-                        sanitized_props.append(prop)
-                return f"SET n += {{{', '.join(sanitized_props)}}}"
-
             # Handle structured content format
             if isinstance(result_data, dict) and "structuredContent" in result_data:
                 structured_content = result_data["structuredContent"]
                 if isinstance(structured_content, dict) and "result" in structured_content:
-                    cypher = structured_content["result"]
-                    # Sanitize SET n += {...} property keys
-                    cypher = re.sub(r'SET\s+n \+= \{([^}]*)\}', sanitize_set_clause, cypher)
-                    return cypher
+                    return structured_content["result"]
 
             # Handle direct string result
             if isinstance(result_data, str):
-                cypher = result_data.strip()
-                cypher = re.sub(r'SET\s+n \+= \{([^}]*)\}', sanitize_set_clause, cypher)
-                return cypher
+                return result_data.strip()
 
             # Handle content array format
             if isinstance(result_data, dict) and "content" in result_data:
@@ -1629,15 +1543,11 @@ Response:
                 if isinstance(content, list) and len(content) > 0:
                     first_content = content[0]
                     if isinstance(first_content, dict) and "text" in first_content:
-                        cypher = first_content["text"].strip()
-                        cypher = re.sub(r'SET\s+n \+= \{([^}]*)\}', sanitize_set_clause, cypher)
-                        return cypher
+                        return first_content["text"].strip()
 
             # Handle direct result field
             if isinstance(result_data, dict) and "result" in result_data:
-                cypher = result_data["result"]
-                cypher = re.sub(r'SET\s+n \+= \{([^}]*)\}', sanitize_set_clause, cypher)
-                return cypher
+                return result_data["result"]
 
             return None
 
@@ -1646,15 +1556,20 @@ Response:
             return None
 
     def _prepare_node_records(self, node: Dict[str, Any], entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Prepare node records for MCP Cypher ingestion with correct parameter format and sanitized property names."""
+        """Prepare node records for MCP Cypher ingestion with correct parameter format."""
         try:
             records = []
             node_label = node.get("label", "")
             data_model = node.get("data_model", "auto")
+            
             for entity in entities:
                 if entity.get("type") == node_label:
-                    record = {"data_model": data_model}
+                    # Prepare record with all entity properties
+                    record = {
+                        "data_model": data_model  # Add data_model to each record
+                    }
                     properties = entity.get("properties", {})
+                    
                     # Get expected property names from node schema
                     expected_properties = []
                     for prop_def in node.get("properties", []):
@@ -1662,38 +1577,44 @@ Response:
                             expected_properties.append(prop_def["name"])
                         elif isinstance(prop_def, str):
                             expected_properties.append(prop_def)
-                    # Ensure required properties exist (sanitize names)
+                    
+                    # Ensure required properties exist
                     for prop_name in expected_properties:
-                        sanitized = self._sanitize_property_name(prop_name)
                         if prop_name in properties:
-                            record[sanitized] = properties[prop_name]
+                            record[prop_name] = properties[prop_name]
                         else:
-                            record[sanitized] = None
-                    # Add any additional properties from the entity (sanitize names)
+                            record[prop_name] = None  # Default value for missing properties
+                    
+                    # Add any additional properties from the entity
                     for prop_name, prop_value in properties.items():
-                        sanitized = self._sanitize_property_name(prop_name)
-                        if sanitized not in record:
-                            record[sanitized] = prop_value
+                        if prop_name not in record:
+                            record[prop_name] = prop_value
+                    
                     records.append(record)
+            
             self.logger.debug(f"Prepared {len(records)} records for node type {node_label}")
             return records
+
         except Exception as e:
             self.logger.error(f"Failed to prepare node records: {str(e)}")
             return []
 
     def _prepare_relationship_records(self, relationship: Dict[str, Any], relationships: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Prepare relationship records for MCP Cypher ingestion with correct parameter format (sourceId, targetId, properties flat, sanitized property names)."""
+        """Prepare relationship records for MCP Cypher ingestion with correct parameter format (sourceId, targetId, properties flat)."""
         try:
             records = []
             rel_type = relationship.get("type", "")
             data_model = relationship.get("data_model", "auto")
+
             for rel in relationships:
                 if rel.get("type") == rel_type:
+                    # MCP expects sourceId and targetId, plus direct relationship properties
                     record = {
                         "sourceId": rel.get("from", ""),
                         "targetId": rel.get("to", ""),
-                        "data_model": data_model
+                        "data_model": data_model  # Add data_model to each record
                     }
+                    
                     # Get expected property names from relationship schema
                     expected_properties = []
                     for prop_def in relationship.get("properties", []):
@@ -1701,19 +1622,22 @@ Response:
                             expected_properties.append(prop_def["name"])
                         elif isinstance(prop_def, str):
                             expected_properties.append(prop_def)
-                    # Add relationship properties (flattened, sanitized)
+                    
+                    # Add relationship properties (flattened)
                     rel_props = rel.get("properties", {})
                     for prop_name in expected_properties:
-                        sanitized = self._sanitize_property_name(prop_name)
                         if prop_name in rel_props:
-                            record[sanitized] = rel_props[prop_name]
+                            record[prop_name] = rel_props[prop_name]
+                    
                     # Only add if both sourceId and targetId are present
                     if record["sourceId"] and record["targetId"]:
                         records.append(record)
                     else:
                         self.logger.warning(f"Skipping relationship record missing required node identifiers: {record}")
+
             self.logger.debug(f"Prepared {len(records)} records for relationship type {rel_type}")
             return records
+
         except Exception as e:
             self.logger.error(f"Failed to prepare relationship records: {str(e)}")
             return []
@@ -1752,7 +1676,7 @@ Response:
             }
             
             response = requests.post(
-                f"{server_url}/mcp/",
+                f"{server_url}/mcp",
                 json=request_payload,
                 headers=headers,
                 timeout=30

@@ -13,7 +13,7 @@ import requests
 import re
 import time
 import csv
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 from langchain_openai import AzureChatOpenAI
 from pydantic import SecretStr
 
@@ -216,95 +216,6 @@ Response:
         self.cypher_server_url = os.getenv("MCP_CYPHER_SERVER_URL", "http://127.0.0.1:8003")
         self.logger.info(f"MCP servers configured - Data Modeling: {self.data_modeling_server_url}, Cypher: {self.cypher_server_url}")
     
-    def _is_valid_entity_type_name(self, name: str) -> bool:
-        """Check if a name looks like a valid entity type name."""
-        if not name or len(name.strip()) == 0:
-            return False
-        
-        name = name.strip()
-        
-        # Should be a reasonable length (not too short or too long)
-        if len(name) < 2 or len(name) > 50:
-            return False
-            
-        # Should start with a letter and contain only letters, numbers, underscores
-        if not name.replace("_", "").replace("-", "").isalnum():
-            return False
-            
-        # Should start with uppercase (PascalCase) or be all uppercase
-        if not (name[0].isupper() or name.isupper()):
-            return False
-            
-        # Exclude common descriptive words that aren't entity types
-        descriptive_words = ["for", "to", "from", "with", "by", "and", "or", "the", "a", "an", 
-                           "this", "that", "these", "those", "up", "down", "in", "out"]
-        if name.lower() in descriptive_words:
-            return False
-            
-        return True
-    
-    def _is_valid_relationship_type_name(self, name: str) -> bool:
-        """Check if a name looks like a valid relationship type name."""
-        if not name or len(name.strip()) == 0:
-            return False
-        
-        name = name.strip()
-        
-        # Should be a reasonable length
-        if len(name) < 2 or len(name) > 50:
-            return False
-            
-        # Should contain only letters, numbers, underscores (relationship names)
-        if not name.replace("_", "").replace("-", "").isalnum():
-            return False
-            
-        # Should be UPPERCASE or PascalCase for relationship types
-        if not (name.isupper() or (name[0].isupper() and "_" not in name)):
-            return False
-            
-        # Exclude single words that are too generic
-        generic_words = ["TO", "FROM", "WITH", "BY", "FOR", "AND", "OR", "THE"]
-        if name.upper() in generic_words:
-            return False
-            
-        return True
-    
-    def _is_descriptive_text(self, text: str) -> bool:
-        """Check if text appears to be descriptive rather than a relationship instance."""
-        if not text:
-            return False
-            
-        text_lower = text.lower().strip()
-        
-        # Check for common descriptive phrases that get incorrectly parsed
-        descriptive_patterns = [
-            "for", "to", "from", "with", "by", "and", "or", "the", "a", "an",
-            "this", "that", "these", "those", "up", "down", "in", "out",
-            "entities", "instances", "records", "data", "values", "properties",
-            "relationship", "entity", "type", "class", "structure", "format",
-            "example", "sample", "list", "array", "collection", "set",
-            "note", "notes", "explanation", "description", "details",
-            "summary", "overview", "analysis", "result", "output"
-        ]
-        
-        # If the text contains too many descriptive words, it's likely descriptive
-        word_count = len(text.split())
-        descriptive_word_count = sum(1 for word in text.split() if word.lower() in descriptive_patterns)
-        
-        if word_count > 2 and descriptive_word_count / word_count > 0.3:
-            return True
-            
-        # Check for specific patterns that indicate descriptive text
-        if any(pattern in text_lower for pattern in [
-            "up to", "from row", "to row", "for each", "in the", "of the", 
-            "with the", "by the", "such as", "including", "excluding",
-            "represents", "contains", "consists", "composed", "structured",
-            "formatted", "organized", "arranged", "presented"
-        ]):
-            return True
-            
-        return False
-    
     def initialize_processing_stats(self):
         """Initialize processing statistics for tracking pipeline performance."""
         self.processing_stats = {
@@ -317,11 +228,6 @@ Response:
             "mcp_requests_made": 0,           # Total MCP API calls
             "mcp_requests_successful": 0,     # Successful MCP API calls
             "mcp_requests_failed": 0,         # Failed MCP API calls
-            "parsing_errors": 0,             # LLM response parsing errors
-            "validation_warnings": 0,        # Dynamic validation warnings
-            "processing_time": 0.0,          # Total processing time
-            "llm_response_time": 0.0,        # LLM processing time
-            "mcp_response_time": 0.0,        # MCP processing time
             "errors": []
         }
 
@@ -428,74 +334,124 @@ Response:
         """
         Layer 2: LLM Schema Discovery & Entity Extraction
         
-        This method performs schema discovery and entity extraction, returning structured lists
-        of entities and relationships instead of JSON format.
-        
-        Returns:
-            Dict containing:
-            - extracted_entities: List of entities with type, properties, and key_property
-            - extracted_relationships: List of relationships with type, start_entity, end_entity, cardinality
+        This method combines both schema discovery and entity extraction in a single LLM call
+        for better consistency and context preservation.
         """
         try:
             self.logger.info("Starting LLM schema discovery and entity extraction...")
             
-            # Enhanced prompt for structured list-based response
+            # Enhanced comprehensive prompt for generic schema discovery and entity extraction
             enhanced_prompt = f"""
             You are an expert data analyst and knowledge graph architect. Analyze the provided content and perform comprehensive schema discovery and entity extraction for knowledge graph construction.
 
-            TASK OVERVIEW:
-            1. Identify the data domain and format (CSV, JSON, etc.)
-            2. Discover entity types and their properties
-            3. Identify relationships between entities
-            4. Extract ALL individual data records as entity instances
-            5. Create relationship instances between entities
+            CONTENT ANALYSIS INSTRUCTIONS:
+            1. First, identify the domain and data type (medical, business, technical, research, etc.)
+            2. Detect data format (CSV, JSON, text, structured records, etc.)
+            3. Identify key entities, their attributes, and relationships
+            4. Consider hierarchical, temporal, and categorical relationships
+            5. Handle multi-valued fields and complex data structures
+            6. Ensure comprehensive coverage of all data elements
 
-            SCHEMA DISCOVERY:
-            - Analyze ALL columns/fields to identify distinct entity types
-            - Group related attributes under logical entity types  
-            - Identify primary keys and relationships between entities
-            - Use clear, descriptive names (PascalCase for entities, UPPER_CASE for relationships)
+            SCHEMA DISCOVERY TASK:
+            - Analyze ALL columns/fields in the data to identify distinct entity types
+            - Group related attributes under logical entity types
+            - Identify primary keys, foreign keys, and unique identifiers
+            - Detect categorical fields, temporal fields, and measurement fields
+            - Consider entity hierarchies and specialized entity types
+            - Map relationships between entities (1:1, 1:many, many:many)
+            - Include composite entities for complex relationships
+            - Consider temporal and sequential relationships
+            - Identify lookup/reference entities vs. main entities
 
-            ENTITY EXTRACTION:
+            ENTITY EXTRACTION GUIDELINES:
             - Extract ALL data records as entities with complete attribute sets
-            - Use ORIGINAL data values as IDs - DO NOT add prefixes like FND_, PAT_, IMG_, etc.
-            - If ID field exists, use it exactly as provided in source data
-            - For entities without explicit IDs, create simple numeric or descriptive IDs
-            - Preserve all data values exactly as they appear in source and handle missing values appropriately
+            - Handle multi-valued fields by creating separate entities or arrays
+            - Ensure proper entity deduplication using natural keys
+            - Create relationship instances for all detected connections
+            - Handle missing values appropriately
+            - Preserve data types and constraints
+            - Generate unique IDs for all entities and relationships
 
-            RELATIONSHIP EXTRACTION:
-            - Identify direct references (foreign keys, shared IDs)
-            - Create relationship instances for detected connections
-            - Use semantic relationships based on domain knowledge
+            RELATIONSHIP DISCOVERY RULES:
+            - Direct references (foreign keys, IDs)
+            - Hierarchical relationships (parent-child, categories)
+            - Temporal relationships (sequences, versions, timelines)
+            - Compositional relationships (part-of, contains)
+            - Associative relationships (many-to-many via junction entities)
+            - Derived relationships (calculated, inferred)
+
+            DATA MODELING BEST PRACTICES:
+            - Use clear, descriptive entity and relationship names
+            - Normalize data to reduce redundancy
+            - Handle lookup tables and controlled vocabularies
+            - Consider entity specialization and generalization
+            - Model complex data types appropriately
+            - Ensure referential integrity in relationships
 
             Content to analyze:
             {content}
 
-            RESPONSE FORMAT (Use clear section headers, not JSON):
-
-            === EXTRACTED ENTITY LIST ===
-            Entity Type: <EntityTypeName>
-            Properties: <comma-separated list of properties>
-            Key Property: <primary identifier property>
-
-            === EXTRACTED RELATIONSHIP LIST ===
-            Relationship Type: <RELATIONSHIP_NAME>
-            Start Entity: <StartEntityType>
-            End Entity: <EndEntityType>
-            Cardinality: <1:1|1:many|many:many>
-
-            === DATA INSTANCES ===
-            Entity Instance: <EntityType>|<UniqueID>|<Property1=Value1,Property2=Value2,...>
-
-            === RELATIONSHIP INSTANCES ===
-            <SourceEntityType> <SourceID> <RELATIONSHIP_TYPE> <TargetEntityType> <TargetID>
-
-            REQUIREMENTS:
-            - Extract ALL data records completely
-            - Use consistent naming conventions  
-            - Use ORIGINAL data values as entity IDs - NO artificial prefixes
-            - Preserve exact field values from source data (e.g., "Cardiomegaly", not "FND_Cardiomegaly")
-            - Create meaningful relationships based on data connections
+            Return this EXACT JSON structure (do not modify the structure):
+            {{
+                "schema_discovery": {{
+                    "confidence": <float_0_to_1>,
+                    "domain": "<detected_domain>",
+                    "data_format": "<detected_format>",
+                    "entity_types": [
+                        {{
+                            "type": "<EntityTypeName>",
+                            "properties": ["id", "<property1>", "<property2>", "..."],
+                            "description": "<detailed_description>",
+                            "key_property": "<primary_identifier>",
+                            "entity_category": "<main|lookup|junction|temporal>"
+                        }}
+                    ],
+                    "relationship_types": [
+                        {{
+                            "type": "<RELATIONSHIP_NAME>",
+                            "start_entity": "<StartEntityType>",
+                            "end_entity": "<EndEntityType>",
+                            "description": "<relationship_description>",
+                            "cardinality": "<1:1|1:many|many:many>",
+                            "relationship_category": "<direct|hierarchical|temporal|compositional|associative>"
+                        }}
+                    ]
+                }},
+                "entity_extraction": {{
+                    "entities": [
+                        {{
+                            "type": "<EntityTypeName>",
+                            "properties": {{
+                                "id": "<unique_identifier>",
+                                "<property1>": "<value1>",
+                                "<property2>": "<value2>"
+                            }}
+                        }}
+                    ],
+                    "relationships": [
+                        {{
+                            "type": "<RELATIONSHIP_NAME>",
+                            "from": "<source_entity_id>",
+                            "to": "<target_entity_id>",
+                            "start_node_label": "<StartEntityType>",
+                            "end_node_label": "<EndEntityType>",
+                            "properties": {{
+                                "<rel_property1>": "<rel_value1>"
+                            }}
+                        }}
+                    ]
+                }}
+            }}
+            
+            CRITICAL REQUIREMENTS:
+            1. Extract ALL data records - do not sample or truncate
+            2. Create comprehensive entity types covering all data attributes
+            3. Establish ALL logical relationships between entities
+            4. Use consistent naming conventions (PascalCase for entities, UPPER_CASE for relationships)
+            5. Ensure all entities have unique IDs and all relationships are properly connected
+            6. Provide high confidence scores (>0.8) for well-structured data
+            7. Handle edge cases like missing values, duplicates, and data quality issues
+            8. Preserve semantic meaning and domain context in entity/relationship naming
             """
 
             # Make LLM request using existing infrastructure with retry logic
@@ -503,44 +459,45 @@ Response:
                 self.logger.error("LLM client not available")
                 return {"success": False, "error": "LLM client not initialized"}
 
-            self.logger.info("Making LLM request for structured schema discovery...")
+            # Debug: Check LLM configuration
+            print(f"[DEBUG] LLM client available: {self.llm is not None}")
+            print(f"[DEBUG] Content length: {len(enhanced_prompt)} characters")
+
             max_retries = 3
             for attempt in range(max_retries):
                 try:
                     self.logger.info(f"LLM request attempt {attempt + 1}/{max_retries}")
+                    print(f"[DEBUG] Starting LLM request attempt {attempt + 1}")
                     response = self.llm.invoke(enhanced_prompt)
                     response_text = response.content if hasattr(response, 'content') else str(response)
-                    
-                    # DEBUG: Save raw LLM response to analyze relationship extraction
-                    with open("debug_current_llm_response.txt", "w", encoding="utf-8") as f:
-                        f.write(response_text)
-                    print(f"[DEBUG] Raw LLM response saved to debug_current_llm_response.txt")
-                    
-                    self.logger.info(f"LLM response received, length: {len(response_text)} characters")
+                    print(f"[DEBUG] LLM response received, length: {len(response_text)} characters")
                     break
                 except Exception as e:
                     error_details = f"LLM attempt {attempt + 1} failed: {str(e)}"
                     self.logger.warning(error_details)
+                    print(f"[DEBUG] {error_details}")  # Also print to console for debugging
                     
                     if attempt == max_retries - 1:
                         final_error = f"LLM failed after {max_retries} attempts: {str(e)}"
-                        self.logger.error(final_error)
+                        print(f"[ERROR] {final_error}")
                         return {"success": False, "error": final_error}
                     # Wait before retry
                     import time
                     time.sleep(2 ** attempt)  # Exponential backoff
 
-            # Parse the structured response
-            parsed_result = self._parse_structured_llm_response(response_text)
+            # Parse the combined response
+            parsed_result = self._parse_llm_schema_extraction_response(response_text)
             
             if parsed_result.get("success"):
-                entities_count = len(parsed_result.get("extracted_entities", []))
-                relationships_count = len(parsed_result.get("extracted_relationships", []))
+                schema_confidence = parsed_result.get("schema_discovery", {}).get("confidence", 0.0)
+                entities_count = len(parsed_result.get("entity_extraction", {}).get("entities", []))
+                relationships_count = len(parsed_result.get("entity_extraction", {}).get("relationships", []))
                 
                 self.processing_stats["schemas_discovered"] += 1
                 self.processing_stats["entities_extracted"] += entities_count
                 
-                self.logger.info(f"LLM processing completed - Entities: {entities_count}, Relationships: {relationships_count}")
+                self.logger.info(f"LLM processing completed - Schema confidence: {schema_confidence:.2f}, "
+                               f"Entities: {entities_count}, Relationships: {relationships_count}")
             
             return parsed_result
             
@@ -549,434 +506,159 @@ Response:
             self.logger.error(error_msg)
             return {"success": False, "error": error_msg}
 
-    def _parse_structured_llm_response(self, response_text: str) -> Dict[str, Any]:
+    def _parse_llm_schema_extraction_response(self, response_text: str) -> Dict[str, Any]:
         """
-        Parse the structured LLM response for schema discovery and entity extraction.
-        
-        Returns:
-            Dict containing:
-            - extracted_entities: List of entity dictionaries with type, properties, key_property
-            - extracted_relationships: List of relationship dictionaries with type, start_entity, end_entity, cardinality
+        Parse the combined LLM response for schema discovery and entity extraction.
+        Enhanced with better error handling and JSON repair capabilities.
         """
         try:
-            self.logger.info("Parsing structured LLM response...")
+            # Clean the response text by removing markdown code block markers
+            cleaned_text = response_text.strip()
+            if cleaned_text.startswith('```json'):
+                cleaned_text = cleaned_text[7:]  # Remove ```json
+            if cleaned_text.startswith('```'):
+                cleaned_text = cleaned_text[3:]   # Remove ```
+            if cleaned_text.endswith('```'):
+                cleaned_text = cleaned_text[:-3]  # Remove closing ```
             
-            # Initialize result structure
-            extracted_entities = []
-            extracted_relationships = []
-            entity_types = []
-            relationship_types = []
+            cleaned_text = cleaned_text.strip()
             
             # Save raw response for debugging
             try:
-                with open("debug_structured_response.txt", "w", encoding="utf-8") as f:
-                    f.write(f"Structured Response:\n{response_text}\n")
-            except Exception as debug_e:
-                self.logger.warning(f"Failed to save debug response: {debug_e}")
-            
-            # Try to parse as JSON first (preferred format)
-            try:
-                json_data = json.loads(response_text.strip())
-                self.logger.info("LLM response is JSON format, parsing accordingly...")
-                
-                # Extract schema discovery
-                schema_discovery = json_data.get("schema_discovery", {})
-                
-                # Parse entity types from JSON
-                for entity in schema_discovery.get("entity_types", []):
-                    entity_type = {
-                        "type": entity.get("type", ""),
-                        "properties": entity.get("properties", []),
-                        "description": entity.get("description", ""),
-                        "key_property": entity.get("key_property", "")
-                    }
-                    entity_types.append(entity_type)
-                
-                # Parse relationship types from JSON
-                for rel in schema_discovery.get("relationship_types", []):
-                    rel_type = {
-                        "type": rel.get("type", ""),
-                        "start_entity": rel.get("start_entity", ""),
-                        "end_entity": rel.get("end_entity", ""),
-                        "description": rel.get("description", ""),
-                        "cardinality": rel.get("cardinality", "1:many")
-                    }
-                    relationship_types.append(rel_type)
-                
-                # Extract entity extraction data
-                entity_extraction = json_data.get("entity_extraction", {})
-                
-                # Parse entities from JSON
-                for entity in entity_extraction.get("entities", []):
-                    entity_instance = {
-                        "type": entity.get("type", ""),
-                        "properties": entity.get("properties", {})
-                    }
-                    extracted_entities.append(entity_instance)
-                
-                # Parse relationships from JSON
-                for rel in entity_extraction.get("relationships", []):
-                    rel_instance = {
-                        "type": rel.get("type", ""),
-                        "from": rel.get("from", ""),
-                        "to": rel.get("to", ""),
-                        "start_node_label": rel.get("start_node_label", ""),
-                        "end_node_label": rel.get("end_node_label", ""),
-                        "properties": rel.get("properties", {})
-                    }
-                    extracted_relationships.append(rel_instance)
-                
-                self.logger.info(f"JSON parsing successful - Entities: {len(extracted_entities)}, Relationships: {len(extracted_relationships)}")
-                
-                return {
-                    "success": True,
-                    "extracted_entities": extracted_entities,
-                    "extracted_relationships": extracted_relationships,
-                    "entity_types": entity_types,
-                    "relationship_types": relationship_types,
-                    "confidence": schema_discovery.get("confidence", 0.8)
-                }
-                
-            except json.JSONDecodeError:
-                self.logger.info("LLM response is not JSON, parsing as structured text...")
-                # Continue with structured text parsing below
+                with open("debug_llm_response_latest.txt", "w", encoding="utf-8") as f:
+                    f.write(f"Original Response:\n{response_text}\n\n")
+                    f.write(f"Cleaned Response:\n{cleaned_text}\n")
             except Exception:
                 pass  # Don't fail if we can't save debug file
             
-            lines = response_text.strip().split('\n')
-            current_section = None
-            current_entity = {}
-            current_relationship = {}
-            
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
+            # Try to parse the cleaned JSON directly first
+            try:
+                parsed_data = json.loads(cleaned_text)
+            except json.JSONDecodeError as e:
+                print(f"[DEBUG] Initial JSON parsing failed: {e}")
+                print(f"[DEBUG] Error position: {e.pos}")
                 
-                # Detect sections
-                if line.startswith("=== EXTRACTED ENTITY LIST ==="):
-                    current_section = "entity_types"
-                    continue
-                elif line.startswith("=== EXTRACTED RELATIONSHIP LIST ==="):
-                    current_section = "relationship_types"
-                    continue
-                elif line.startswith("=== DATA INSTANCES ==="):
-                    current_section = "data_instances"
-                    continue
-                elif line.startswith("=== RELATIONSHIP INSTANCES ==="):
-                    current_section = "relationship_instances"
-                    continue
-                elif line.startswith("==="):
-                    # Any other section header resets current_section to None
-                    current_section = None
-                    continue
-                elif line.startswith("**NOTES") or "NOTES ON EDGE CASES" in line:
-                    # Stop parsing when we reach the notes section
-                    break
-                
-                # Parse content based on current section
-                if current_section == "entity_types":
-                    if line.startswith("**Entity Type:") or line.startswith("Entity Type:"):
-                        # Save previous entity type if exists
-                        if current_entity:
-                            entity_types.append(current_entity)
-                        # Handle both formats: "**Entity Type: Patient**" and "Entity Type: Patient"
-                        entity_name = line.split(":", 1)[1].strip().replace("**", "").strip()
-                        current_entity = {"type": entity_name}
-                    elif (line.startswith("- Properties:") or line.startswith("Properties:")) and current_entity:
-                        props_str = line.split(":", 1)[1].strip()
-                        current_entity["properties"] = [p.strip() for p in props_str.split(",")]
-                    elif (line.startswith("- Key Property:") or line.startswith("Key Property:")) and current_entity:
-                        current_entity["key_property"] = line.split(":", 1)[1].strip()
-                
-                elif current_section == "relationship_types":
-                    if line.startswith("**Relationship Type:") or line.startswith("Relationship Type:"):
-                        # Save previous relationship type if exists
-                        if current_relationship:
-                            relationship_types.append(current_relationship)
-                        # Handle both formats
-                        rel_name = line.split(":", 1)[1].strip().replace("**", "").strip()
-                        current_relationship = {"type": rel_name}
-                    elif (line.startswith("- Start Entity:") or line.startswith("Start Entity:")) and current_relationship:
-                        current_relationship["start_entity"] = line.split(":", 1)[1].strip()
-                    elif (line.startswith("- End Entity:") or line.startswith("End Entity:")) and current_relationship:
-                        current_relationship["end_entity"] = line.split(":", 1)[1].strip()
-                    elif (line.startswith("- Cardinality:") or line.startswith("Cardinality:")) and current_relationship:
-                        current_relationship["cardinality"] = line.split(":", 1)[1].strip()
-                
-                elif current_section == "data_instances":
-                    # Handle entity instances that can be nested under sub-sections or stand-alone
-                    if (line.startswith("Entity Instance:") or line.startswith("**Entity Instance:") or
-                        (line.startswith("-") and "Entity Instance:" in line)):
-                        
-                        # Extract the instance line, handling both formats:
-                        # "Entity Instance: EntityType|UniqueID|Property1=Value1,Property2=Value2,..."
-                        # "**Entity Instance: EntityType|UniqueID|Property1=Value1,Property2=Value2,...**"
-                        # "- Entity Instance: EntityType|UniqueID|Property1=Value1,Property2=Value2,..."
-                        instance_line = line.strip("*").strip()
-                        if instance_line.startswith("-"):
-                            instance_line = instance_line[1:].strip()  # Remove leading dash
-                        
-                        # Parse format: Entity Instance: EntityType|UniqueID|Property1=Value1,Property2=Value2,...
-                        instance_parts = instance_line.split(":", 1)[1].strip().split("|")
-                        if len(instance_parts) >= 3:
-                            entity_type = instance_parts[0].strip()
-                            entity_id = instance_parts[1].strip()
-                            properties_str = instance_parts[2].strip()
-                            
-                            print(f"DEBUG: Parsing entity instance: {entity_type} {entity_id}")
-                            
-                            # Parse properties with better error handling
-                            properties = {}
-                            if properties_str:
-                                for prop_pair in properties_str.split(","):
-                                    if "=" in prop_pair:
-                                        try:
-                                            key, value = prop_pair.split("=", 1)
-                                            key_clean = key.strip()
-                                            value_clean = value.strip().strip('"\'')  # Remove quotes
-                                            properties[key_clean] = value_clean
-                                        except Exception as e:
-                                            self.logger.warning(f"Failed to parse property pair '{prop_pair}': {e}")
-                                            continue
-                            
-                            # Add ID to properties
-                            properties["id"] = entity_id
-                            
-                            # Create entity instance
-                            entity_instance = {
-                                "type": entity_type,
-                                "entity_id": entity_id,
-                                "properties": properties
-                            }
-                            extracted_entities.append(entity_instance)
-                    elif line and not line.startswith("---") and not line.startswith("**"):
-                        # Parse relationship instances: "SourceEntity SourceID RELATIONSHIP_TYPE TargetEntity"
-                        parts = line.split()
-                        if len(parts) >= 4:
-                            source_entity = parts[0]
-                            source_id = parts[1]
-                            rel_type = parts[2]
-                            target_entity = " ".join(parts[3:])  # Handle multi-word entity names
-                            
-                            # Create relationship instance
-                            rel_instance = {
-                                "type": rel_type,
-                                "from": source_id,
-                                "to": target_entity,
-                                "start_node_label": source_entity,
-                                "end_node_label": target_entity.split()[0] if " " in target_entity else target_entity,
-                                "properties": {}
-                            }
-                            extracted_relationships.append(rel_instance)
-                
-                elif current_section == "relationship_instances":
-                    # Parse relationship instances in multiple formats:
-                    # Format 1: "SourceEntityType SourceID RELATIONSHIP_TYPE TargetEntityType TargetID"
-                    # Format 2: "**SourceEntityType SourceID RELATIONSHIP_TYPE TargetEntityType TargetID**"
-                    # Format 3: "- SourceEntityType SourceID RELATIONSHIP_TYPE TargetEntityType TargetID"
+                # Try to extract and fix common JSON issues
+                try:
+                    # Remove any trailing commas before closing braces/brackets
+                    import re
+                    fixed_text = re.sub(r',(\s*[}\]])', r'\1', cleaned_text)
                     
-                    if (line and not line.startswith("===") and not line.startswith("---") and 
-                        not line.startswith("NOTES") and not line.startswith("...") and
-                        not ":" in line):  # Exclude section headers and notes
-                        
-                        line_content = line.strip("*").strip()
-                        if line_content.startswith("-"):
-                            line_content = line_content[1:].strip()  # Remove leading dash
-                        
-                        # Skip empty lines or lines that look like descriptions
-                        if (not line_content or len(line_content.split()) < 5 or 
-                            line_content.startswith("(") or "Continue" in line_content):
-                            continue
-                            
-                        parts = line_content.split()
-                        if len(parts) >= 5:
-                            source_entity_type = parts[0]
-                            source_id = parts[1]
-                            rel_type = parts[2]
-                            target_entity_type = parts[3]
-                            target_id = " ".join(parts[4:])  # Handle multi-word target IDs
-                            
-                            # DYNAMIC VALIDATION: Validate structure and format rather than specific values
-                            # Get dynamic entity types from discovered schema
-                            discovered_entity_types = [et.get("type", "") for et in entity_types if et.get("type")]
-                            discovered_relationship_types = [rt.get("type", "") for rt in relationship_types if rt.get("type")]
-                            
-                            # Validate relationship format and content quality
-                            is_valid_relationship = (
-                                # Check basic structure
-                                len(source_entity_type) > 0 and len(target_entity_type) > 0 and len(rel_type) > 0 and
-                                len(source_id) > 0 and len(target_id) > 0 and
-                                # Validate entity types match discovered schema (if available) or are reasonable names
-                                (not discovered_entity_types or 
-                                 source_entity_type in discovered_entity_types or 
-                                 self._is_valid_entity_type_name(source_entity_type)) and
-                                (not discovered_entity_types or 
-                                 target_entity_type in discovered_entity_types or 
-                                 self._is_valid_entity_type_name(target_entity_type)) and
-                                # Validate relationship type format (should be UPPERCASE or CamelCase, not descriptive text)
-                                (not discovered_relationship_types or 
-                                 rel_type in discovered_relationship_types or 
-                                 self._is_valid_relationship_type_name(rel_type)) and
-                                # Exclude common descriptive phrases that get parsed incorrectly
-                                not self._is_descriptive_text(line_content)
-                            )
-                            
-                            if is_valid_relationship:
-                                print(f"DEBUG: Parsing relationship instance: {source_entity_type} {source_id} -> {rel_type} -> {target_entity_type} {target_id}")
-                                
-                                # Create relationship instance
-                                rel_instance = {
-                                    "type": rel_type,
-                                    "from": source_id,
-                                    "to": target_id,
-                                    "start_node_label": source_entity_type,
-                                    "end_node_label": target_entity_type,
-                                    "properties": {}
-                                }
-                                extracted_relationships.append(rel_instance)
-                            else:
-                                print(f"DEBUG: Skipping invalid relationship format: {line_content[:100]}...")
-            
-            # Don't forget to add the last items
-            if current_entity:
-                entity_types.append(current_entity)
-            
-            if current_relationship:
-                relationship_types.append(current_relationship)
-            
-            # extracted_entities and extracted_relationships are populated from parsing above
-            
-            # Validate and clean up the results with dynamic validation
-            valid_entities = []
-            discovered_entity_types = [et.get("type", "") for et in entity_types if et.get("type")]
-            
-            for entity in extracted_entities:
-                # Dynamic validation - check structure rather than hardcoded values
-                if (entity.get("type") and entity.get("entity_id") and
-                    self._is_valid_entity_type_name(entity.get("type", "")) and
-                    (not discovered_entity_types or entity.get("type") in discovered_entity_types)):
+                    # Try parsing the fixed version
+                    parsed_data = json.loads(fixed_text)
+                    print("[DEBUG] JSON parsing succeeded after fixing trailing commas")
+                except json.JSONDecodeError:
+                    # Fallback: Extract JSON from response text using regex
+                    json_match = re.search(r'\{.*\}', cleaned_text, re.DOTALL)
+                    if not json_match:
+                        return {"success": False, "error": "No JSON found in LLM response"}
                     
-                    # Ensure properties dict exists
-                    if "properties" not in entity:
-                        entity["properties"] = {}
+                    json_str = json_match.group()
+                    # Try to fix common issues in the extracted JSON
+                    fixed_json = re.sub(r',(\s*[}\]])', r'\1', json_str)
                     
-                    # Add the entity_id to properties if not present
-                    if "id" not in entity["properties"]:
-                        entity["properties"]["id"] = entity["entity_id"]
+                    try:
+                        parsed_data = json.loads(fixed_json)
+                        print("[DEBUG] JSON parsing succeeded using regex extraction and fixing")
+                    except json.JSONDecodeError as final_error:
+                        print(f"[DEBUG] All JSON parsing attempts failed: {final_error}")
+                        # Save the problematic response for manual inspection
+                        try:
+                            with open("debug_failed_json.txt", "w", encoding="utf-8") as f:
+                                f.write(f"Failed JSON Response:\n{cleaned_text}\n\n")
+                                f.write(f"Extracted JSON:\n{json_str}\n\n")
+                                f.write(f"Fixed JSON:\n{fixed_json}\n\n")
+                                f.write(f"Error: {final_error}\n")
+                            print("[DEBUG] Failed JSON saved to debug_failed_json.txt")
+                        except Exception:
+                            pass
+                        return {"success": False, "error": f"JSON parsing failed: {final_error}"}
+            
+            # Debug: Show what we parsed
+            print(f"[DEBUG] Parsed JSON structure keys: {list(parsed_data.keys())}")
+            
+            # Validate required structure
+            if "schema_discovery" not in parsed_data or "entity_extraction" not in parsed_data:
+                return {"success": False, "error": "Invalid response structure from LLM"}
+            
+            schema_discovery = parsed_data["schema_discovery"]
+            entity_extraction = parsed_data["entity_extraction"]
+            
+            # Validate confidence score
+            confidence = schema_discovery.get("confidence", 0.0)
+            if confidence < 0.7:
+                self.logger.warning(f"Low schema discovery confidence: {confidence:.2f}")
+            
+            # Log additional schema discovery information
+            domain = schema_discovery.get("domain", "unknown")
+            data_format = schema_discovery.get("data_format", "unknown")
+            entity_types_count = len(schema_discovery.get("entity_types", []))
+            relationship_types_count = len(schema_discovery.get("relationship_types", []))
+            
+            self.logger.info(f"Schema Discovery Summary - Domain: {domain}, Format: {data_format}, "
+                           f"Entities: {entity_types_count}, Relationships: {relationship_types_count}")
+            
+            # Validate entity types have required fields
+            for entity_type in schema_discovery.get("entity_types", []):
+                if not entity_type.get("type") or not entity_type.get("properties"):
+                    self.logger.warning(f"Invalid entity type structure: {entity_type}")
                     
-                    valid_entities.append(entity)
-                else:
-                    self.logger.warning(f"Skipping invalid entity (dynamic validation): {entity}")
-            
-            valid_relationships = []
-            discovered_relationship_types = [rt.get("type", "") for rt in relationship_types if rt.get("type")]
-            
-            for rel in extracted_relationships:
-                # Dynamic validation for relationships
-                if (rel.get("type") and rel.get("from") and rel.get("to") and
-                    self._is_valid_relationship_type_name(rel.get("type", "")) and
-                    (not discovered_relationship_types or rel.get("type") in discovered_relationship_types) and
-                    not self._is_descriptive_text(f"{rel.get('from', '')} {rel.get('type', '')} {rel.get('to', '')}")):
-                    
-                    # Ensure properties dict exists
-                    if "properties" not in rel:
-                        rel["properties"] = {}
-                    valid_relationships.append(rel)
-                else:
-                    self.logger.warning(f"Skipping invalid relationship (dynamic validation): {rel}")
-            
-            self.logger.info(f"Parsed {len(entity_types)} entity types, {len(relationship_types)} relationship types")
-            self.logger.info(f"Extracted {len(valid_entities)} entities, {len(valid_relationships)} relationships")
-            
+            # Validate relationship types have required fields
+            for rel_type in schema_discovery.get("relationship_types", []):
+                if not all(key in rel_type for key in ["type", "start_entity", "end_entity"]):
+                    self.logger.warning(f"Invalid relationship type structure: {rel_type}")
+
             return {
                 "success": True,
-                "extracted_entities": valid_entities,
-                "extracted_relationships": valid_relationships,
-                "entity_types": entity_types,
-                "relationship_types": relationship_types
+                "schema_discovery": schema_discovery,
+                "entity_extraction": entity_extraction,
+                "combined_confidence": confidence,
+                "domain": domain,
+                "data_format": data_format
             }
             
+        except json.JSONDecodeError as e:
+            return {"success": False, "error": f"JSON parsing failed: {str(e)}"}
         except Exception as e:
-            error_msg = f"Structured response parsing failed: {str(e)}"
-            self.logger.error(error_msg)
-            return {"success": False, "error": error_msg}
+            return {"success": False, "error": f"Response parsing failed: {str(e)}"}
 
     def _mcp_validation_and_execution(self, llm_result: Dict[str, Any]) -> Dict[str, Any]:
         """
         Layer 3: MCP Server Validation & Execution
         
         Takes the LLM results and validates the schema, then executes the ingestion.
-        Updated to work with structured lists instead of JSON schema format.
         """
         try:
             self.logger.info("Starting MCP validation and execution...")
             
-            # Extract the new structured format
-            extracted_entities = llm_result.get("extracted_entities", [])
-            extracted_relationships = llm_result.get("extracted_relationships", [])
-            entity_types = llm_result.get("entity_types", [])
-            relationship_types = llm_result.get("relationship_types", [])
+            schema_discovery = llm_result.get("schema_discovery", {})
+            entity_extraction = llm_result.get("entity_extraction", {})
             
-            # DEBUG: Check LLM result structure
-            print(f"[DEBUG] LLM RESULT KEYS: {list(llm_result.keys())}")
-            
-            # Try alternative key structures from 2-list format
-            if not extracted_entities and "entities" in llm_result:
-                extracted_entities = llm_result["entities"]
-                print(f"[DEBUG] Used alternative entities key: {len(extracted_entities)} entities")
-            if not extracted_relationships and "relationships" in llm_result:
-                extracted_relationships = llm_result["relationships"] 
-                print(f"[DEBUG] Used alternative relationships key: {len(extracted_relationships)} relationships")
-            if not entity_types and "entity_types" in llm_result:
-                entity_types = llm_result["entity_types"]
-            if not relationship_types and "relationship_types" in llm_result:
-                relationship_types = llm_result["relationship_types"]
-            
-            # DEBUG: Print what was actually extracted from LLM
-            print(f"[DEBUG] LLM EXTRACTION RESULTS:")
-            print(f"  - Entity types: {len(entity_types)}")
-            print(f"  - Relationship types: {len(relationship_types)}")  
-            print(f"  - Extracted entities: {len(extracted_entities)}")
-            print(f"  - Extracted relationships: {len(extracted_relationships)}")
-            
-            if relationship_types:
-                print(f"[DEBUG] Relationship types found:")
-                for i, rt in enumerate(relationship_types):
-                    print(f"  {i+1}. Type: {rt.get('type', 'MISSING')}")
-                    print(f"      Start: {rt.get('start_entity', 'MISSING')}")
-                    print(f"      End: {rt.get('end_entity', 'MISSING')}")
-                    print(f"      Raw: {rt}")
+            # Step 1: Validate schema using MCP Data Modeling server (with fallback)
+            validation_result = self._validate_schema_with_mcp_server(schema_discovery)
+            if not validation_result.get("success"):
+                self.logger.warning(f"MCP schema validation failed: {validation_result.get('error')}. Proceeding with direct ingestion.")
+                # Don't fail the entire process - proceed with direct ingestion
             else:
-                print(f"[DEBUG] NO RELATIONSHIP TYPES FOUND!")
-                    
-            if extracted_relationships:
-                print(f"[DEBUG] Extracted relationships:")
-                for i, rel in enumerate(extracted_relationships[:5]):  # Show first 5
-                    print(f"  {i+1}. {rel.get('type', 'unknown')}: {rel.get('from', 'unknown')} -> {rel.get('to', 'unknown')}")
-            else:
-                print(f"[DEBUG] NO RELATIONSHIPS EXTRACTED - This is the root cause!")
+                self.processing_stats["schemas_validated"] += 1
+                self.logger.info("Schema validation successful")
             
-            # Step 1: Build Neo4j data model from extracted entities and relationships
-            data_model = self._build_neo4j_data_model_from_structured_results(
-                entity_types, relationship_types, extracted_entities, extracted_relationships
-            )
-            
+            # Step 2: Build Neo4j data model from validated schema and extracted entities
+            data_model = self._build_neo4j_data_model_from_llm_results(schema_discovery, entity_extraction)
             if not data_model:
                 return {
                     "success": False,
-                    "error": "Failed to build Neo4j data model from structured results",
+                    "error": "Failed to build Neo4j data model from LLM results",
                     "stats": self.processing_stats
                 }
             
-            # Step 2: Execute ingestion using MCP Cypher server  
-            ingestion_result = self._execute_mcp_ingestion(data_model, {"entities": extracted_entities, "relationships": extracted_relationships})
+            # Step 3: Execute ingestion using MCP Cypher server
+            ingestion_result = self._execute_mcp_ingestion(data_model, entity_extraction)
             
             if ingestion_result.get("success"):
                 self.logger.info("MCP ingestion execution successful")
                 ingestion_result["validation_passed"] = True
-                # No confidence score in new structure, default to high confidence
-                ingestion_result["schema_confidence"] = 0.9
+                ingestion_result["schema_confidence"] = llm_result.get("combined_confidence", 0.0)
             
             return ingestion_result
             
@@ -1016,23 +698,15 @@ Response:
             # Don't fail the entire pipeline for validation errors
             return {"success": True, "skipped": True, "reason": f"validation_error: {str(e)}"}
 
-    def _build_neo4j_data_model_from_structured_results(self, entity_types: List[Dict], 
-                                                       relationship_types: List[Dict],
-                                                       extracted_entities: List[Dict], 
-                                                       extracted_relationships: List[Dict]) -> Optional[Dict[str, Any]]:
+    def _build_neo4j_data_model_from_llm_results(self, schema_discovery: Dict[str, Any], 
+                                                 entity_extraction: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
-        Build Neo4j data model from structured entity and relationship lists.
-        
-        Args:
-            entity_types: List of entity type definitions with type, properties, key_property
-            relationship_types: List of relationship type definitions with type, start_entity, end_entity, cardinality
-            extracted_entities: List of actual entity instances
-            extracted_relationships: List of actual relationship instances
+        Build Neo4j data model combining schema discovery and entity extraction results.
         """
         try:
-            # Build nodes from extracted entities - Group by type
+            # Build nodes from entity extraction - Group entities by type
             node_groups = {}
-            for entity in extracted_entities:
+            for entity in entity_extraction.get("entities", []):
                 entity_type = entity.get("type", "Entity")
                 if entity_type not in node_groups:
                     node_groups[entity_type] = []
@@ -1041,17 +715,10 @@ Response:
             # Create node definitions for each entity type
             nodes = []
             for entity_type, entities in node_groups.items():
-                # Find the corresponding entity type definition
-                type_def = next((et for et in entity_types if et.get("type") == entity_type), None)
-                
                 # Collect all properties from all entities of this type
                 all_properties = set()
                 for entity in entities:
                     all_properties.update(entity.get("properties", {}).keys())
-                
-                # Also add properties from type definition if available
-                if type_def and type_def.get("properties"):
-                    all_properties.update(type_def["properties"])
                 
                 # Ensure 'id' property exists
                 if "id" not in all_properties:
@@ -1069,55 +736,40 @@ Response:
                     props = entity.get("properties", {})
                     # Ensure id exists
                     if "id" not in props:
-                        entity_id = entity.get("entity_id", f"auto_id_{entity_type}_{idx+1}")
-                        props["id"] = entity_id
+                        props["id"] = f"auto_id_{entity_type}_{idx+1}"
                     
-                    # Create record with all expected properties - avoid NULL values
+                    # Create record with all expected properties
                     record = {}
                     for prop_name in all_properties:
-                        value = props.get(prop_name, "")
-                        # Convert None/null values to empty string to avoid Neo4j merge errors
-                        if value is None or str(value).lower() == "null":
-                            value = ""
-                        record[prop_name] = str(value)  # Ensure string type
+                        record[prop_name] = props.get(prop_name, "")  # Default to empty string
                     records.append(record)
-                
-                # Determine key property - always use 'id' to avoid NULL issues
-                key_property_name = "id"
-                # We force the use of 'id' as key property to avoid NULL key issues
-                # that were causing Neo4j merge errors
                 
                 # Create node definition
                 node = {
                     "label": entity_type,
                     "properties": property_schema,
                     "records": records,
-                    "key_property": {"name": key_property_name, "type": "string"},
+                    "key_property": {"name": "id", "type": "string"},
                     "data_model": "auto"
                 }
                 nodes.append(node)
                 
                 self.logger.info(f"Created node group {entity_type} with {len(records)} records")
 
-            # Build relationships from extracted relationship instances - group by type
+            # Build relationships from entity extraction - group by type
             relationship_groups = {}
-            for rel in extracted_relationships:
-                # Only process relationships that have required fields - use JSON format fields
+            for rel in entity_extraction.get("relationships", []):
+                # Only process relationships that have required fields
                 if not rel.get("type") or not rel.get("from") or not rel.get("to"):
                     self.logger.warning(f"Skipping incomplete relationship: {rel}")
                     continue
                     
                 rel_type = rel.get("type")
                 if rel_type not in relationship_groups:
-                    # Find the corresponding relationship type definition
-                    type_def = next((rt for rt in relationship_types if rt.get("type") == rel_type), None)
-                    
                     relationship_groups[rel_type] = {
                         "type": rel_type,
-                        "start_node_label": rel.get("start_node_label", 
-                                                  type_def.get("start_entity", "Entity") if type_def else "Entity"),
-                        "end_node_label": rel.get("end_node_label", 
-                                                type_def.get("end_entity", "Entity") if type_def else "Entity"),
+                        "start_node_label": rel.get("start_node_label", "Entity"),
+                        "end_node_label": rel.get("end_node_label", "Entity"),
                         "properties": [],
                         "records": [],
                         "data_model": "auto"
@@ -1126,10 +778,10 @@ Response:
                 # Create proper record format
                 rel_record = {
                     "type": rel.get("type"),
-                    "from": rel.get("from"),  # Use JSON format fields
-                    "to": rel.get("to"),      # Use JSON format fields
-                    "start_node_label": rel.get("start_node_label", relationship_groups[rel_type]["start_node_label"]),
-                    "end_node_label": rel.get("end_node_label", relationship_groups[rel_type]["end_node_label"]),
+                    "from": rel.get("from"),
+                    "to": rel.get("to"),
+                    "start_node_label": rel.get("start_node_label", "Entity"),
+                    "end_node_label": rel.get("end_node_label", "Entity"),
                     "properties": rel.get("properties", {})
                 }
                 
@@ -1145,19 +797,20 @@ Response:
                 "nodes": nodes,
                 "relationships": relationships,
                 "schema_metadata": {
-                    "entity_types_count": len(entity_types),
-                    "relationship_types_count": len(relationship_types),
-                    "extracted_entities_count": len(extracted_entities),
-                    "extracted_relationships_count": len(extracted_relationships)
+                    "confidence": schema_discovery.get("confidence", 0.0),
+                    "entity_types_count": len(schema_discovery.get("entity_types", [])),
+                    "relationship_types_count": len(schema_discovery.get("relationship_types", []))
                 }
             }
 
+            # Debug: Print the data model structure (minimal)
+            print(f"[INFO] Built data model with {len(nodes)} node types and {len(relationships)} relationship types")
+            
             self.logger.info(f"Data model built: {len(nodes)} node types, {len(relationships)} relationship types")
             return data_model
 
         except Exception as e:
-            error_msg = f"Failed to build Neo4j data model from structured results: {str(e)}"
-            self.logger.error(error_msg)
+            self.logger.error(f"Failed to build Neo4j data model: {str(e)}")
             return None
 
     def _execute_mcp_ingestion(self, data_model: Dict[str, Any], entities_relationships: Dict[str, Any]) -> Dict[str, Any]:
@@ -1182,12 +835,6 @@ Response:
                 self.logger.info(f"Node ingestion for {node.get('label', 'unknown')}: {node_count} entities created")
                 
             # Step 3: Ingest relationships using MCP Cypher server  
-            print(f"[DEBUG] Data model has {len(data_model.get('relationships', []))} relationship types")
-            if data_model.get("relationships"):
-                for i, rel in enumerate(data_model.get("relationships", [])):
-                    print(f"[DEBUG] Relationship {i+1}: {rel.get('type', 'unknown')} from {rel.get('start_node_label', 'unknown')} to {rel.get('end_node_label', 'unknown')}")
-                    print(f"[DEBUG] Relationship has {len(rel.get('records', []))} records")
-            
             for relationship in data_model.get("relationships", []):
                 rel_count = self._ingest_relationships_via_mcp(relationship, entities_relationships)
                 relationships_created += rel_count
@@ -1423,11 +1070,6 @@ Response:
 
             # Step 3: Prepare records for this relationship type
             records = self._prepare_relationship_records(relationship, entities_relationships.get("relationships", []))
-            print(f"[DEBUG] _prepare_relationship_records called for {rel_type}")
-            print(f"[DEBUG] Input relationships count: {len(entities_relationships.get('relationships', []))}")
-            print(f"[DEBUG] Prepared records count: {len(records)}")
-            if entities_relationships.get('relationships'):
-                print(f"[DEBUG] Sample relationship: {entities_relationships.get('relationships')[0]}")
             self.logger.debug(f"Prepared {len(records)} records for {rel_type}")
             if not records:
                 print(f"[INFO] No records to ingest for relationship {rel_type}")
@@ -1852,8 +1494,7 @@ def main():
     
 
     # Generic document ingestion: parse CSV or text, synthesize key property, format for LLM
-    # doc_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "doc", "Data_Entry_2017.csv")
-    doc_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "doc", "BBox_List_2017.csv")
+    doc_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "doc", "Data_Entry_2017-small.csv")
     summary_blocks = []
     try:
         with open(doc_path, "r", encoding="utf-8") as f:
@@ -1873,110 +1514,52 @@ def main():
         formatted_content = ""
 
 
-    # CHUNKING LOGIC COMMENTED OUT - Process all data at once instead
-    # chunk_size = 15  # Reduced from 25 to improve LLM success rate
-    # total_chunks = min(2, (len(summary_blocks) + chunk_size - 1) // chunk_size)  # Process only 2 chunks for testing
-    # all_results = []
-    # print(f"FINAL TEST: Processing Data_Entry_2017.csv for ingestion in {total_chunks} chunks (size: {chunk_size})...")
-
-    # for i in range(0, min(2 * chunk_size, len(summary_blocks)), chunk_size):
-    #     chunk_blocks = summary_blocks[i:i+chunk_size]
-    #     chunk_content = "\n".join(chunk_blocks)
-    #     chunk_num = i//chunk_size+1
-    #     print(f"\n--- Processing chunk {chunk_num}/{total_chunks} ---")
-    #     # Minimal logging for performance
-    #     print(f"  Chunk size: {len(chunk_blocks)} entities")
-    #     result = tool.ingest_content_with_schema_validation(chunk_content)
-    #     all_results.append(result)
-    #     print(f"  Success: {result.get('success', False)} | Entities: {result.get('entities_created', 0)} | Relationships: {result.get('relationships_created', 0)} | Confidence: {result.get('schema_confidence', 0.0):.2f}")
-    #     # Only show errors, not full debug details
-    #     if not result.get('success', True):
-    #         print(f"  Error: {result.get('error', 'Unknown error')}")
-
-    # PROCESS ALL DATA IN CHUNKS: Process entire dataset in manageable chunks
-    print(f"Processing ENTIRE Data_Entry_2017.csv dataset in chunks...")
-    print(f"Total entities to process: {len(summary_blocks)}")
-    
-    # Process in chunks to handle large dataset efficiently
-    chunk_size = 500  # Process 500 entities at a time (reduced for better LLM handling)
-    total_chunks = (len(summary_blocks) + chunk_size - 1) // chunk_size
+    # Chunked ingestion: split summary_blocks into smaller batches to reduce LLM load 
+    chunk_size = 15  # Reduced from 25 to improve LLM success rate
+    total_chunks = min(2, (len(summary_blocks) + chunk_size - 1) // chunk_size)  # Process only 2 chunks for testing
     all_results = []
-    total_entities_created = 0
-    total_relationships_created = 0
-    
-    print(f"Processing {len(summary_blocks)} entities in {total_chunks} chunks of {chunk_size}...")
-    
-    for chunk_idx in range(total_chunks):
-        start_idx = chunk_idx * chunk_size
-        end_idx = min(start_idx + chunk_size, len(summary_blocks))
-        chunk_blocks = summary_blocks[start_idx:end_idx]
-        chunk_content = "\n\n".join(chunk_blocks)
-        
-        print(f"\n--- Processing chunk {chunk_idx + 1}/{total_chunks} (entities {start_idx + 1}-{end_idx}) ---")
-        
-        try:
-            result = tool.ingest_content_with_schema_validation(chunk_content)
-            all_results.append(result)
-            
-            # Accumulate results
-            entities_created = result.get('entities_created', 0)
-            relationships_created = result.get('relationships_created', 0)
-            total_entities_created += entities_created
-            total_relationships_created += relationships_created
-            
-            print(f"  Chunk Success: {result.get('success', False)}")
-            print(f"  Entities Created: {entities_created}")
-            print(f"  Relationships Created: {relationships_created}")
-            
-            if not result.get('success', False):
-                print(f"  Error: {result.get('error', 'Unknown error')}")
-                
-        except Exception as e:
-            print(f"  Chunk {chunk_idx + 1} failed with exception: {str(e)}")
-            all_results.append({
-                'success': False, 
-                'error': str(e),
-                'entities_created': 0,
-                'relationships_created': 0
-            })
-    
-    # Create summary result
-    result = {
-        'success': all(r.get('success', False) for r in all_results),
-        'entities_created': total_entities_created,
-        'relationships_created': total_relationships_created,
-        'schema_confidence': sum(r.get('schema_confidence', 0.0) for r in all_results) / len(all_results) if all_results else 0.0,
-        'chunks_processed': len(all_results)
-    }
-    
-    print(f"\n--- COMPLETE DATASET PROCESSING RESULT ---")
-    print(f"Success: {result.get('success', False)}")
-    print(f"Total Entities Created: {result.get('entities_created', 0)}")
-    print(f"Total Relationships Created: {result.get('relationships_created', 0)}")
-    print(f"Chunks Processed: {result.get('chunks_processed', 0)}")
-    print(f"Average Schema Confidence: {result.get('schema_confidence', 0.0):.2f}")
-    
-    if not result.get('success', True):
-        print(f"Error: {result.get('error', 'Unknown error')}")
-        
-    # Set results for summary
-    total_entities = result.get('entities_created', 0)
-    total_relationships = result.get('relationships_created', 0)
-    avg_confidence = result.get('schema_confidence', 0.0)
+    print(f"FINAL TEST: Processing Data_Entry_2017-small.csv for ingestion in {total_chunks} chunks (size: {chunk_size})...")
 
-    print("\n=== CHUNKED BATCH INGESTION SUMMARY ===")
-    print(f"Processing Mode: Chunked processing ({chunk_size} entities per chunk)")
+
+    for i in range(0, min(2 * chunk_size, len(summary_blocks)), chunk_size):
+        chunk_blocks = summary_blocks[i:i+chunk_size]
+        chunk_content = "\n".join(chunk_blocks)
+        chunk_num = i//chunk_size+1
+        print(f"\n--- Processing chunk {chunk_num}/{total_chunks} ---")
+        # Minimal logging for performance
+        print(f"  Chunk size: {len(chunk_blocks)} entities")
+        result = tool.ingest_content_with_schema_validation(chunk_content)
+        all_results.append(result)
+        print(f"  Success: {result.get('success', False)} | Entities: {result.get('entities_created', 0)} | Relationships: {result.get('relationships_created', 0)} | Confidence: {result.get('schema_confidence', 0.0):.2f}")
+        # Only show errors, not full debug details
+        if not result.get('success', True):
+            print(f"  Error: {result.get('error', 'Unknown error')}")
+
+    # Aggregate results
+    total_entities = sum(r.get('entities_created', 0) for r in all_results if r.get('success'))
+    total_relationships = sum(r.get('relationships_created', 0) for r in all_results if r.get('success'))
+    avg_confidence = (
+        sum(r.get('schema_confidence', 0.0) for r in all_results if r.get('success')) /
+        max(1, sum(1 for r in all_results if r.get('success')))
+    )
+
+    print("\n=== OPTIMIZED Chunked Ingestion Summary ===")
+    print(f"Total Chunks: {total_chunks}")
     print(f"Total Entities Created: {total_entities}")
     print(f"Total Relationships Created: {total_relationships}")
-    print(f"Schema Confidence: {avg_confidence:.2f}")
-    print(f"Dataset Size: {len(summary_blocks)} entities processed in {total_chunks} chunks")
-    print(f"Successful Chunks: {sum(1 for r in all_results if r.get('success', False))}/{len(all_results)}")
+    print(f"Average Schema Confidence: {avg_confidence:.2f}")
+    print(f"Performance: {len(summary_blocks)} entities in {total_chunks} chunks")
 
-    # Display error if any exist
-    if not result.get('success', True):
-        print(f"\nError: {result.get('error', 'Unknown error')}")
+    # Only display errors if any exist
+    errors = [r.get('error') for r in all_results if not r.get('success')]
+    if errors:
+        print(f"\nErrors ({len(errors)} chunks failed):")
+        for idx, error in enumerate(errors[:3], 1):  # Show only first 3 errors
+            print(f"  {idx}. {error}")
+        if len(errors) > 3:
+            print(f"  ... and {len(errors) - 3} more errors")
     else:
-        print("\nSuccess - entire dataset processed successfully!")
+        print("\nNo errors - all chunks processed successfully!")
 
     # Display MCP API request summary
     print("\n" + "="*80)

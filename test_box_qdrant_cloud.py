@@ -9,6 +9,7 @@ import ssl
 import asyncio
 import warnings
 import json
+import copy
 
 # Comprehensive SSL fixes for Qdrant cloud
 os.environ['PYTHONHTTPSVERIFY'] = '0'
@@ -80,12 +81,13 @@ async def test_box_file_ingestion():
 
         #doc_uri = "azure://rag-agents-container/Data_Entry_2017-small.csv"
         doc_uri ="box://file/1969320109971"
+        #doc_uri ="box://file/1969363374429"
         metadata = {
             "document_source": "box",
             "document_type": "txt",
             "content_type": "text/plain",
             "processing_options": {},
-            "test_type": "graph_only"  # Focus on graph ingestion for nodes and relationships
+            #"test_type": "graph_only"  # Focus on graph ingestion for nodes and relationships
         }
 
 

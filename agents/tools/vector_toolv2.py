@@ -198,6 +198,47 @@ class VectorToolV2:
         
         self.logger.info(f"Qdrant client initialized - collection: {self.collection_name}")
     
+    def _delete_existing_document_chunks(self, source_filename: str):
+        """Delete existing chunks for a document to prevent duplicates during re-ingestion."""
+        try:
+            # Create filter to find all chunks from this document
+            filter_condition = Filter(
+                must=[
+                    FieldCondition(
+                        key="metadata.source_filename",
+                        match=MatchValue(value=source_filename)
+                    )
+                ]
+            )
+            
+            # Search for existing points
+            search_result = self.qdrant_client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=filter_condition,
+                limit=10000,  # High limit to get all chunks for the document
+                with_payload=False,
+                with_vectors=False
+            )
+            
+            existing_point_ids = [point.id for point in search_result[0]]
+            
+            if existing_point_ids:
+                self.logger.info(f"Deleting {len(existing_point_ids)} existing chunks for document: {source_filename}")
+                
+                # Delete existing points
+                self.qdrant_client.delete(
+                    collection_name=self.collection_name,
+                    points_selector=existing_point_ids
+                )
+                
+                self.logger.info(f"Successfully deleted existing chunks for: {source_filename}")
+            else:
+                self.logger.info(f"No existing chunks found for: {source_filename}")
+                
+        except Exception as e:
+            self.logger.warning(f"Failed to delete existing chunks for {source_filename}: {e}")
+            # Continue with ingestion even if deletion fails
+
     def _ensure_collection_exists(self):
         """Ensure Qdrant collection exists with proper vector configuration."""
         try:
@@ -322,11 +363,26 @@ class VectorToolV2:
             
             # Step 4: Store vectors in Qdrant
             self.logger.info("Storing vectors in Qdrant...")
+            
+            # First, delete old data for this document to prevent duplicates
+            source_filename = os.path.basename(file_path)
+            self._delete_existing_document_chunks(source_filename)
+            
             points = []
             
             for idx, embedded_node in enumerate(embedded_nodes):
-                # Create unique point ID
-                point_id = str(uuid.uuid4())
+                # Create stable UUID for chunk using source filename and chunk index
+                # This ensures that re-ingesting the same document will update existing chunks
+                chunk_id = idx + 1
+                unique_str = f"{source_filename}:{chunk_id}"
+                point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, unique_str))
+                
+                # Add source filename to metadata for filtering
+                enhanced_metadata = embedded_node["metadata"].copy()
+                enhanced_metadata.update({
+                    "source_filename": source_filename,
+                    "chunk_index": chunk_id
+                })
                 
                 # Create Qdrant point
                 point = PointStruct(
@@ -334,7 +390,7 @@ class VectorToolV2:
                     vector=embedded_node["embedding"],
                     payload={
                         "text": embedded_node["node"].text,
-                        "metadata": embedded_node["metadata"]
+                        "metadata": enhanced_metadata
                     }
                 )
                 points.append(point)
@@ -353,6 +409,7 @@ class VectorToolV2:
             return {
                 "success": True,
                 "file_path": file_path,
+                "source_filename": source_filename,
                 "content_hash": content_hash,
                 "chunks_created": len(nodes),
                 "embeddings_generated": len(embedded_nodes),

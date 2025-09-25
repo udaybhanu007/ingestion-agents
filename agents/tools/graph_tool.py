@@ -80,6 +80,7 @@ class GraphIngestionTool:
                 self.logger.warning(f".env.dev not found at {env_path}")
         except Exception as e:
             self.logger.warning(f"Could not load .env.dev: {str(e)}")
+        # === EXTRACTED ENTITY LIST ===
         self.setup_llm()
         self.setup_mcp_servers()
         self.initialize_processing_stats()
@@ -372,9 +373,31 @@ Response:
                 if "id" not in props:
                     props["id"] = f"auto_id_{idx+1}"
                 entity["properties"] = props
+            
+            # Store entities for relationship validation
+            self._current_entities = entities
+            
+            # Debug: Log sample entity IDs for relationship validation
+            print(f"[DEBUG] Storing entities for relationship validation - count: {len(entities)}")
+            if entities:
+                sample_entity_ids = [e.get("properties", {}).get("id") for e in entities[:5]]
+                self.logger.debug(f"Sample entity IDs from _current_entities: {sample_entity_ids}")
+                print(f"[DEBUG] Sample entity IDs stored in _current_entities: {sample_entity_ids}")
+                
+                # Show full entity structure for first entity
+                if entities:
+                    print(f"[DEBUG] Full first entity structure: {entities[0]}")
+            else:
+                print(f"[DEBUG] WARNING: No entities to store in _current_entities!")
+            
             # Relationships - ensure data_model is set
             relationships = llm_result.get("entity_extraction", {}).get("relationships", [])
             for idx, rel in enumerate(relationships):
+                # Patch: Accept both 'start_entity'/'end_entity' and 'from'/'to' fields
+                if "from" not in rel and "start_entity" in rel:
+                    rel["from"] = rel["start_entity"]
+                if "to" not in rel and "end_entity" in rel:
+                    rel["to"] = rel["end_entity"]
                 # Synthesize data_model if missing
                 if "data_model" not in rel:
                     rel["data_model"] = "auto"
@@ -840,7 +863,7 @@ Response:
                         if (not line_content or len(line_content.split()) < 5 or 
                             line_content.startswith("(") or "Continue" in line_content):
                             continue
-                            
+                        
                         parts = line_content.split()
                         if len(parts) >= 5:
                             source_entity_type = parts[0]
@@ -902,45 +925,36 @@ Response:
             # Validate and clean up the results with dynamic validation
             valid_entities = []
             discovered_entity_types = [et.get("type", "") for et in entity_types if et.get("type")]
-            
+
             for entity in extracted_entities:
-                # Dynamic validation - check structure rather than hardcoded values
-                if (entity.get("type") and entity.get("entity_id") and
-                    self._is_valid_entity_type_name(entity.get("type", "")) and
-                    (not discovered_entity_types or entity.get("type") in discovered_entity_types)):
-                    
+                # Relaxed validation: accept all entities with type and entity_id
+                if entity.get("type") and entity.get("entity_id"):
                     # Ensure properties dict exists
                     if "properties" not in entity:
                         entity["properties"] = {}
-                    
                     # Add the entity_id to properties if not present
                     if "id" not in entity["properties"]:
                         entity["properties"]["id"] = entity["entity_id"]
-                    
                     valid_entities.append(entity)
                 else:
-                    self.logger.warning(f"Skipping invalid entity (dynamic validation): {entity}")
-            
+                    self.logger.warning(f"Skipping malformed entity: {entity}")
+
             valid_relationships = []
             discovered_relationship_types = [rt.get("type", "") for rt in relationship_types if rt.get("type")]
-            
+
             for rel in extracted_relationships:
-                # Dynamic validation for relationships
-                if (rel.get("type") and rel.get("from") and rel.get("to") and
-                    self._is_valid_relationship_type_name(rel.get("type", "")) and
-                    (not discovered_relationship_types or rel.get("type") in discovered_relationship_types) and
-                    not self._is_descriptive_text(f"{rel.get('from', '')} {rel.get('type', '')} {rel.get('to', '')}")):
-                    
+                # Relaxed validation: accept all relationships with type, from, and to
+                if rel.get("type") and rel.get("from") and rel.get("to"):
                     # Ensure properties dict exists
                     if "properties" not in rel:
                         rel["properties"] = {}
                     valid_relationships.append(rel)
                 else:
-                    self.logger.warning(f"Skipping invalid relationship (dynamic validation): {rel}")
-            
+                    self.logger.warning(f"Skipping malformed relationship: {rel}")
+
             self.logger.info(f"Parsed {len(entity_types)} entity types, {len(relationship_types)} relationship types")
             self.logger.info(f"Extracted {len(valid_entities)} entities, {len(valid_relationships)} relationships")
-            
+
             return {
                 "success": True,
                 "extracted_entities": valid_entities,
@@ -1241,6 +1255,8 @@ Response:
                     print(f"[DEBUG] Relationship has {len(rel.get('records', []))} records")
             
             for relationship in data_model.get("relationships", []):
+                rel_type = relationship.get("type", "").upper()
+                # Pass actual relationships from the parsed LLM output
                 rel_count = self._ingest_relationships_via_mcp(relationship, entities_relationships)
                 relationships_created += rel_count
                 self.logger.info(f"Relationship ingestion for {relationship.get('type', 'unknown')}: {rel_count} relationships created")
@@ -1474,7 +1490,11 @@ Response:
                 return self._fallback_relationship_generation(relationship, entities_relationships)
 
             # Step 3: Prepare records for this relationship type
-            records = self._prepare_relationship_records(relationship, entities_relationships.get("relationships", []))
+            records = self._prepare_relationship_records(
+                relationship, 
+                entities_relationships.get("relationships", []),
+                entities_relationships.get("entities", [])
+            )
             print(f"[DEBUG] _prepare_relationship_records called for {rel_type}")
             print(f"[DEBUG] Input relationships count: {len(entities_relationships.get('relationships', []))}")
             print(f"[DEBUG] Prepared records count: {len(records)}")
@@ -1523,7 +1543,11 @@ Response:
             print(f"[FALLBACK] Using direct Cypher generation for {rel_type}")
             
             # Prepare relationship records
-            records = self._prepare_relationship_records(relationship, entities_relationships.get("relationships", []))
+            records = self._prepare_relationship_records(
+                relationship, 
+                entities_relationships.get("relationships", []),
+                entities_relationships.get("entities", [])
+            )
             if not records:
                 print(f"[INFO] No records to ingest for relationship {rel_type}")
                 return 0
@@ -1563,12 +1587,25 @@ Response:
     def _generate_relationship_cypher(self, rel_type: str, start_label: str, end_label: str, records: List[Dict]) -> str:
         """Generate Cypher query for relationship creation."""
         try:
-            # Simple UNWIND-based relationship creation
+            # Sanitize labels to ensure valid Cypher syntax
+            def sanitize_label(label):
+                # Remove any parentheses, spaces, or invalid characters
+                label = str(label)
+                label = re.sub(r'[^a-zA-Z0-9_]', '_', label)
+                # Remove leading/trailing underscores
+                label = label.strip('_')
+                # If label is empty after sanitization, use 'Entity'
+                return label if label else 'Entity'
+
+            start_label_clean = sanitize_label(start_label)
+            end_label_clean = sanitize_label(end_label)
+            rel_type_clean = sanitize_label(rel_type)
+
             cypher = f"""
             UNWIND $records AS record
-            MATCH (start:{start_label} {{id: record.sourceId}})
-            MATCH (end:{end_label} {{id: record.targetId}})
-            MERGE (start)-[r:{rel_type}]->(end)
+            MATCH (start:{start_label_clean} {{id: record.sourceId}})
+            MATCH (end:{end_label_clean} {{id: record.targetId}})
+            MERGE (start)-[r:{rel_type_clean}]->(end)
             RETURN count(r) as relationships_created
             """
             return cypher.strip()
@@ -1651,71 +1688,169 @@ Response:
             records = []
             node_label = node.get("label", "")
             data_model = node.get("data_model", "auto")
-            for entity in entities:
-                if entity.get("type") == node_label:
-                    record = {"data_model": data_model}
+            if node_label.lower() == "finding":
+                # Collect all unique findings from entities
+                findings_set = set()
+                for entity in entities:
                     properties = entity.get("properties", {})
-                    # Get expected property names from node schema
-                    expected_properties = []
-                    for prop_def in node.get("properties", []):
-                        if isinstance(prop_def, dict) and "name" in prop_def:
-                            expected_properties.append(prop_def["name"])
-                        elif isinstance(prop_def, str):
-                            expected_properties.append(prop_def)
-                    # Ensure required properties exist (sanitize names)
-                    for prop_name in expected_properties:
-                        sanitized = self._sanitize_property_name(prop_name)
-                        if prop_name in properties:
-                            record[sanitized] = properties[prop_name]
+                    # Dynamically find the property name for finding label
+                    finding_prop_name = None
+                    for prop in properties.keys():
+                        if "finding" in prop.lower() and "label" in prop.lower():
+                            finding_prop_name = prop
+                            break
+                    findings = properties.get(finding_prop_name) if finding_prop_name else None
+                    if findings:
+                        if isinstance(findings, list):
+                            findings_list = findings
                         else:
-                            record[sanitized] = None
-                    # Add any additional properties from the entity (sanitize names)
-                    for prop_name, prop_value in properties.items():
-                        sanitized = self._sanitize_property_name(prop_name)
-                        if sanitized not in record:
-                            record[sanitized] = prop_value
-                    records.append(record)
-            self.logger.debug(f"Prepared {len(records)} records for node type {node_label}")
-            return records
+                            findings_list = re.split(r"\||,", str(findings))
+                        for f in findings_list:
+                            findings_set.add(f.strip())
+                # Use dynamic property names from node schema
+                for finding in findings_set:
+                    if finding:
+                        record = {"id": finding, "data_model": data_model}
+                        for prop_def in node.get("properties", []):
+                            prop_name = prop_def["name"] if isinstance(prop_def, dict) and "name" in prop_def else prop_def
+                            if prop_name != "id" and prop_name != "data_model":
+                                record[prop_name] = finding
+                        records.append(record)
+                self.logger.debug(f"Prepared {len(records)} records for node type {node_label}")
+                return records
+            else:
+                # Default: just return entities as-is (existing logic)
+                for entity in entities:
+                    if entity.get("type") == node_label:
+                        record = {"data_model": data_model}
+                        properties = entity.get("properties", {})
+                        expected_properties = []
+                        for prop_def in node.get("properties", []):
+                            if isinstance(prop_def, dict) and "name" in prop_def:
+                                expected_properties.append(prop_def["name"])
+                            elif isinstance(prop_def, str):
+                                expected_properties.append(prop_def)
+                        for prop_name in expected_properties:
+                            sanitized = self._sanitize_property_name(prop_name)
+                            if prop_name in properties:
+                                record[sanitized] = properties[prop_name]
+                            else:
+                                record[sanitized] = None
+                        for prop_name, prop_value in properties.items():
+                            sanitized = self._sanitize_property_name(prop_name)
+                            if sanitized not in record:
+                                record[sanitized] = prop_value
+                        records.append(record)
+                self.logger.debug(f"Prepared {len(records)} records for node type {node_label}")
+                return records
         except Exception as e:
             self.logger.error(f"Failed to prepare node records: {str(e)}")
             return []
 
-    def _prepare_relationship_records(self, relationship: Dict[str, Any], relationships: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Prepare relationship records for MCP Cypher ingestion with correct parameter format (sourceId, targetId, properties flat, sanitized property names)."""
+    def _prepare_relationship_records(self, relationship: Dict[str, Any], relationships: List[Dict[str, Any]], entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Prepare relationship records for MCP Cypher ingestion with correct parameter format (sourceId, targetId, properties flat, sanitized property names).
+        Supports one-to-many relationships and logs skipped records with reasons.
+        Validates that relationship IDs reference actual created entities.
+        """
         try:
+            rel_type = relationship.get("type")
+            start_label = relationship.get("start_node_label")
+            end_label = relationship.get("end_node_label")
+            cardinality = relationship.get("cardinality", "1:1")
             records = []
-            rel_type = relationship.get("type", "")
-            data_model = relationship.get("data_model", "auto")
+            skipped = []
+            
+            # Build lookup of available entity IDs from the passed entities parameter
+            available_entity_ids = set()
+            
+            # Get entities from the passed entities parameter (most reliable source)
+            for entity in entities:
+                entity_id = entity.get("properties", {}).get("id")
+                if entity_id:
+                    available_entity_ids.add(str(entity_id))
+                    
+            # Fallback: also try to get from _current_entities if available
+            if not available_entity_ids and hasattr(self, '_current_entities'):
+                for entity in self._current_entities:
+                    entity_id = entity.get("properties", {}).get("id")
+                    if entity_id:
+                        available_entity_ids.add(str(entity_id))
+            
+            # Filter relationships to only those matching this relationship type
+            matching_relationships = []
             for rel in relationships:
                 if rel.get("type") == rel_type:
-                    record = {
-                        "sourceId": rel.get("from", ""),
-                        "targetId": rel.get("to", ""),
-                        "data_model": data_model
-                    }
-                    # Get expected property names from relationship schema
-                    expected_properties = []
-                    for prop_def in relationship.get("properties", []):
-                        if isinstance(prop_def, dict) and "name" in prop_def:
-                            expected_properties.append(prop_def["name"])
-                        elif isinstance(prop_def, str):
-                            expected_properties.append(prop_def)
-                    # Add relationship properties (flattened, sanitized)
-                    rel_props = rel.get("properties", {})
-                    for prop_name in expected_properties:
-                        sanitized = self._sanitize_property_name(prop_name)
-                        if prop_name in rel_props:
-                            record[sanitized] = rel_props[prop_name]
-                    # Only add if both sourceId and targetId are present
-                    if record["sourceId"] and record["targetId"]:
-                        records.append(record)
-                    else:
-                        self.logger.warning(f"Skipping relationship record missing required node identifiers: {record}")
-            self.logger.debug(f"Prepared {len(records)} records for relationship type {rel_type}")
+                    matching_relationships.append(rel)
+
+            self.logger.debug(f"Found {len(matching_relationships)} relationships of type {rel_type}")
+            print(f"[DEBUG] Found {len(matching_relationships)} relationships of type {rel_type}")
+
+            # Debug logging to understand the ID mismatch
+            self.logger.debug(f"Available entity IDs: {len(available_entity_ids)} total")
+            if available_entity_ids:
+                sample_ids = list(available_entity_ids)[:10]
+                self.logger.debug(f"Sample entity IDs: {sample_ids}")
+                print(f"[DEBUG] Sample available entity IDs: {sample_ids}")
+            else:
+                print(f"[DEBUG] NO entity IDs found in available_entity_ids set!")
+                print(f"[DEBUG] _current_entities exists: {hasattr(self, '_current_entities')}")
+                if hasattr(self, '_current_entities'):
+                    print(f"[DEBUG] _current_entities count: {len(self._current_entities)}")
+                    if self._current_entities:
+                        sample_entity = self._current_entities[0]
+                        print(f"[DEBUG] Sample entity structure: {sample_entity}")
+                        entity_id = sample_entity.get("properties", {}).get("id")
+                        print(f"[DEBUG] Sample entity ID: {entity_id}")
+            
+            # Log relationship source/target patterns
+            if matching_relationships:
+                rel_sources = [r.get('from') for r in matching_relationships[:5]]
+                rel_targets = [r.get('to') for r in matching_relationships[:5]]
+                print(f"[DEBUG] Sample relationship sources: {rel_sources}")
+                print(f"[DEBUG] Sample relationship targets: {rel_targets}")
+
+            if matching_relationships:
+                sample_rel = matching_relationships[0]
+                print(f"[DEBUG] Sample relationship: from='{sample_rel.get('from')}', to='{sample_rel.get('to')}'")
+            
+            # Process each matching relationship instance
+            for rel in matching_relationships:
+                src = rel.get("from")
+                tgt = rel.get("to") 
+                
+                if not src or not tgt:
+                    skipped.append({"reason": "missing from/to fields", "record": rel})
+                    continue
+                
+                # Validate that source and target IDs exist in created entities
+                src_str = str(src)
+                tgt_str = str(tgt)
+                
+                if src_str not in available_entity_ids:
+                    skipped.append({"reason": f"source ID '{src}' not found in created entities", "record": rel})
+                    continue
+                    
+                if tgt_str not in available_entity_ids:
+                    skipped.append({"reason": f"target ID '{tgt}' not found in created entities", "record": rel})
+                    continue
+                
+                # Valid relationship - create record
+                records.append({
+                    "sourceId": src_str,
+                    "targetId": tgt_str,
+                    "data_model": "auto"
+                })
+            
+            # Log skipped records for diagnosis
+            if skipped:
+                self.logger.warning(f"Skipped {len(skipped)} relationships for {rel_type}: {skipped[:3]}...")  # Only show first 3
+            
+            self.logger.info(f"Prepared {len(records)} relationship records for {rel_type} (cardinality: {cardinality})")
             return records
+            
         except Exception as e:
-            self.logger.error(f"Failed to prepare relationship records: {str(e)}")
+            self.logger.error(f"Failed to prepare relationship records for {relationship.get('type')}: {str(e)}")
             return []
 
     def make_mcp_request(self, server_url: str, tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -1918,6 +2053,97 @@ Log File Location: {getattr(self, 'mcp_log_file', 'Not configured')}
         self.initialize_processing_stats()
 
 
+class RobustKGParser:
+    def __init__(self):
+        self.entity_types = []
+        self.relationship_types = []
+        self.entities = []
+        self.relationships = []
+
+    def parse(self, text):
+        section = None
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            # Section detection
+            if re.match(r"=+ EXTRACTED ENTITY LIST =+", line):
+                section = "entity_types"
+                continue
+            elif re.match(r"=+ EXTRACTED RELATIONSHIP LIST =+", line):
+                section = "relationship_types"
+                continue
+            elif re.match(r"=+ DATA INSTANCES =+", line):
+                section = "entities"
+                continue
+            elif re.match(r"=+ RELATIONSHIP INSTANCES =+", line):
+                section = "relationships"
+                continue
+
+            # Entity type parsing
+            if section == "entity_types" and "Entity Type:" in line:
+                etype = line.split(":", 1)[1].strip()
+                self.entity_types.append({"type": etype})
+            elif section == "entity_types" and "Properties:" in line:
+                props = [p.strip() for p in line.split(":", 1)[1].split(",")]
+                if self.entity_types:
+                    self.entity_types[-1]["properties"] = props
+            elif section == "entity_types" and "Key Property:" in line:
+                key = line.split(":", 1)[1].strip()
+                if self.entity_types:
+                    self.entity_types[-1]["key_property"] = key
+
+            # Relationship type parsing
+            elif section == "relationship_types" and "Relationship Type:" in line:
+                rtype = line.split(":", 1)[1].strip()
+                self.relationship_types.append({"type": rtype})
+            elif section == "relationship_types" and "Start Entity:" in line:
+                start = line.split(":", 1)[1].strip()
+                if self.relationship_types:
+                    self.relationship_types[-1]["start_entity"] = start
+            elif section == "relationship_types" and "End Entity:" in line:
+                end = line.split(":", 1)[1].strip()
+                if self.relationship_types:
+                    self.relationship_types[-1]["end_entity"] = end
+            elif section == "relationship_types" and "Cardinality:" in line:
+                card = line.split(":", 1)[1].strip()
+                if self.relationship_types:
+                    self.relationship_types[-1]["cardinality"] = card
+
+            # Entity instance parsing
+            elif section == "entities" and "|" in line:
+                parts = line.split("|")
+                if len(parts) >= 3:
+                    etype, eid, props_str = parts[0], parts[1], parts[2]
+                    props = {}
+                    for p in props_str.split(","):
+                        if "=" in p:
+                            k, v = p.split("=", 1)
+                            props[k.strip()] = v.strip()
+                    props["id"] = eid
+                    self.entities.append({"type": etype, "id": eid, "properties": props})
+
+            # Relationship instance parsing
+            elif section == "relationships":
+                parts = line.split()
+                if len(parts) >= 5:
+                    self.relationships.append({
+                        "type": parts[2],
+                        "from": parts[1],
+                        "to": parts[4],
+                        "start_node_label": parts[0],
+                        "end_node_label": parts[3]
+                    })
+
+    def get_result(self):
+        return {
+            "entity_types": self.entity_types,
+            "relationship_types": self.relationship_types,
+            "entities": self.entities,
+            "relationships": self.relationships
+        }
+# ...existing code...
+
 # Usage Example and Main Function
 def main():
     """
@@ -1929,7 +2155,7 @@ def main():
 
     # Generic document ingestion: parse CSV or text, synthesize key property, format for LLM
     # doc_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "doc", "Data_Entry_2017.csv")
-    doc_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "doc", "BBox_List_2017.csv")
+    doc_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "doc", "Data_Entry_2017-small.csv")
     summary_blocks = []
     try:
         with open(doc_path, "r", encoding="utf-8") as f:

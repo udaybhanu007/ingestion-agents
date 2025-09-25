@@ -45,6 +45,19 @@ def patch_httpx_ssl():
 # Apply patches early
 patch_httpx_ssl()
 
+def remove_content_from_dict(obj):
+    """Recursively remove all 'content' keys from nested dictionaries"""
+    if isinstance(obj, dict):
+        obj.pop('content', None)
+        for key, value in obj.items():
+            if isinstance(value, dict):
+                remove_content_from_dict(value)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        remove_content_from_dict(item)
+
+
 async def test_box_file_ingestion():
     """Test ingestion of Box file 1969320109971 with Qdrant cloud"""
     
@@ -65,7 +78,8 @@ async def test_box_file_ingestion():
         from agents.planner_agent import PlannerAgent
         from agents.execution_agent import ExecutionAgent
 
-        doc_uri = "azure://rag-agents-container/Data_Entry_2017-small.csv"
+        #doc_uri = "azure://rag-agents-container/Data_Entry_2017-small.csv"
+        doc_uri ="box://file/1969320109971"
         metadata = {
             "document_source": "box",
             "document_type": "txt",
@@ -82,27 +96,31 @@ async def test_box_file_ingestion():
         executor = ExecutionAgent()
 
         print("📋 Creating ingestion plan...")
-        plan = await planner.create_ingestion_plan_async(
+        plan_result = await planner.create_ingestion_plan_async(
             doc_uri=doc_uri,
             metadata=metadata
-            #content=""
         )
+        
+        # Create clean copy for response
+        clean_plan_for_response = copy.deepcopy(plan_result)
+        remove_content_from_dict(clean_plan_for_response)
 
         # Print the plan in JSON format (use repr fallback for non-serializable objects)
         try:
             print("📦 Ingestion plan (JSON):")
-            print(json.dumps(plan, indent=2, default=lambda o: repr(o)))
+            print(json.dumps(clean_plan_for_response, indent=2, ensure_ascii=False))
         except Exception as e:
             print(f"⚠️ Failed to serialize plan to JSON: {e}")
-            print("Raw plan:", repr(plan))
+            
 
         print("⚡ Executing ingestion plan...")
-        result = await executor.execute_plan_async(plan)
+        
+        execution_results = await executor.execute_plan_async(plan_result)
 
         print("🎉 Ingestion completed!")
-        print(f"📈 Result: {result}")
+        print(f"📈 Result: {execution_results}")
 
-        return result
+        return execution_results
 
     except Exception as e:
         print(f"❌ Error during ingestion: {e}")

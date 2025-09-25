@@ -102,7 +102,7 @@ class GraphIngestionTool:
                 f.write("=" * 80 + "\n\n")
             
             self.logger.info(f"MCP request logging initialized. Log file: {self.mcp_log_file}")
-            print(f"[MCP LOGGING] Log file created: {self.mcp_log_file}")
+            # MCP logging initialized (console message removed for cleaner output)
             
         except Exception as e:
             self.logger.error(f"Failed to setup MCP logging: {str(e)}")
@@ -130,16 +130,8 @@ Tool Parameters:
 {"-" * 80}
 """
             
-            # Log to console with colored output
-            print(f"\n{'='*60}")
-            print(f"[MCP REQUEST #{self.processing_stats['mcp_requests_made']}] {timestamp}")
-            print(f"Server: {server_url}")
-            print(f"Tool: {tool_name}")
-            print(f"Payload:")
-            print(json.dumps(request_payload, indent=2))
-            print(f"Parameters:")
-            print(json.dumps(params, indent=2))
-            print(f"{'='*60}\n")
+            # MCP request logging moved to file only for cleaner console output
+            self.logger.debug(f"MCP REQUEST #{self.processing_stats['mcp_requests_made']} to {server_url}/{tool_name}")
             
             # Log to file if available
             if self.mcp_log_file:
@@ -179,15 +171,8 @@ Response:
             
             # Log to console with colored output
             success_status = "✅ SUCCESS" if response.get("success", False) else "❌ FAILED"
-            print(f"\n{'='*60}")
-            print(f"[MCP RESPONSE #{current_request_num}] {timestamp} - {success_status}")
-            print(f"Server: {server_url}")
-            print(f"Tool: {tool_name}")
-            if status_code:
-                print(f"Status: {status_code}")
-            print(f"Response:")
-            print(json.dumps(response, indent=2))
-            print(f"{'='*60}\n")
+            # MCP response logging moved to file only for cleaner console output  
+            self.logger.debug(f"MCP RESPONSE #{current_request_num} from {server_url}/{tool_name} - {success_status}")
             
             # Log to file if available
             if self.mcp_log_file:
@@ -399,16 +384,7 @@ Response:
                 if "to" not in rel and "end_entity" in rel:
                     rel["to"] = rel["end_entity"]
                 # Synthesize data_model if missing
-                if "data_model" not in rel:
-                    rel["data_model"] = "auto"
-
-            # Also ensure schema_discovery entity_types have 'id' property
-            entity_types = llm_result.get("schema_discovery", {}).get("entity_types", [])
-            for et in entity_types:
-                if "id" not in et.get("properties", []):
-                    et["properties"].insert(0, "id")
-
-            # LAYER 3: MCP Server Validation & Execution
+                    # ...existing code...
             self.logger.info("Layer 3: MCP Server Validation & Execution...")
             mcp_result = self._mcp_validation_and_execution(llm_result)
 
@@ -586,11 +562,12 @@ Response:
                     response = self.llm.invoke(enhanced_prompt)
                     response_text = response.content if hasattr(response, 'content') else str(response)
                     
-                    # DEBUG: Save raw LLM response to analyze relationship extraction
-                    with open("debug_current_llm_response.txt", "w", encoding="utf-8") as f:
-                        f.write(response_text)
-                    print(f"[DEBUG] Raw LLM response saved to debug_current_llm_response.txt")
-                    
+                    # Optionally save raw LLM response if DEBUG_LLM_RESPONSE=1 is set in environment
+                    import os
+                    if os.getenv("DEBUG_LLM_RESPONSE", "0") == "1":
+                        with open("debug_current_llm_response.txt", "w", encoding="utf-8") as f:
+                            f.write(response_text)
+                        self.logger.info("Raw LLM response saved to debug_current_llm_response.txt")
                     self.logger.info(f"LLM response received, length: {len(response_text)} characters")
                     break
                 except Exception as e:
@@ -1414,7 +1391,7 @@ Response:
             start_label = relationship.get("start_node_label", "Entity")
             end_label = relationship.get("end_node_label", "Entity")
             
-            print(f"[INFO] Creating relationship {rel_type} from {start_label} to {end_label}")
+            # Info print removed for production cleanup
             
             # Build proper data model structure for MCP call
             data_model = {
@@ -1460,9 +1437,9 @@ Response:
             )
             
             # Enhanced debugging for MCP response
-            print(f"[DEBUG] MCP relationship query result for {rel_type}: success={query_result.get('success')}")
+            # Debug print removed for production cleanup
             if not query_result.get("success", False):
-                print(f"[DEBUG] MCP error details: {query_result.get('error')}")
+                # Debug print removed for production cleanup
                 self.logger.error(f"Failed to get relationship query for {rel_type}: {query_result.get('error')}")
                 # Fallback to direct Cypher generation
                 return self._fallback_relationship_generation(relationship, entities_relationships)
@@ -1470,10 +1447,10 @@ Response:
             # Step 2: Extract Cypher query from MCP response
             cypher_query = self._extract_cypher_from_mcp_response(query_result.get("result"))
 
-            print(f"[DEBUG] Extracted Cypher query for {rel_type}: {cypher_query[:200] if cypher_query else 'None'}...")
+            # Debug print removed for production cleanup
             self.logger.debug(f"Generated Cypher for {rel_type}: {cypher_query[:100]}...")
             if not cypher_query:
-                print(f"[DEBUG] No Cypher query extracted from MCP response")
+                # Debug print removed for production cleanup
                 self.logger.error(f"No valid Cypher query returned for relationship {rel_type}")
                 # Fallback to direct Cypher generation
                 return self._fallback_relationship_generation(relationship, entities_relationships)
@@ -1495,17 +1472,11 @@ Response:
                 entities_relationships.get("relationships", []),
                 entities_relationships.get("entities", [])
             )
-            print(f"[DEBUG] _prepare_relationship_records called for {rel_type}")
-            print(f"[DEBUG] Input relationships count: {len(entities_relationships.get('relationships', []))}")
-            print(f"[DEBUG] Prepared records count: {len(records)}")
-            if entities_relationships.get('relationships'):
-                print(f"[DEBUG] Sample relationship: {entities_relationships.get('relationships')[0]}")
+            # Debug logging removed as per user request
             self.logger.debug(f"Prepared {len(records)} records for {rel_type}")
             if not records:
-                print(f"[INFO] No records to ingest for relationship {rel_type}")
+                # Info print removed for production cleanup
                 return 0
-                
-            print(f"[INFO] Processing {len(records)} {rel_type} relationships")
 
             # Step 4: Execute ingestion via MCP Cypher server using correct format
             mcp_params = {
@@ -1540,7 +1511,7 @@ Response:
             start_label = relationship.get("start_node_label", "Entity")
             end_label = relationship.get("end_node_label", "Entity")
             
-            print(f"[FALLBACK] Using direct Cypher generation for {rel_type}")
+            # Fallback print removed for production cleanup
             
             # Prepare relationship records
             records = self._prepare_relationship_records(
@@ -1549,16 +1520,12 @@ Response:
                 entities_relationships.get("entities", [])
             )
             if not records:
-                print(f"[INFO] No records to ingest for relationship {rel_type}")
+                # Debug logging removed as per user request
                 return 0
-                
-            print(f"[INFO] Processing {len(records)} {rel_type} relationships")
-            
             # Generate direct Cypher query for relationship creation
             cypher_query = self._generate_relationship_cypher(rel_type, start_label, end_label, records)
-            
             if not cypher_query:
-                print(f"[ERROR] Failed to generate Cypher for {rel_type}")
+                # Error print removed for production cleanup
                 return 0
             
             # Execute directly via MCP Cypher server
@@ -1610,7 +1577,7 @@ Response:
             """
             return cypher.strip()
         except Exception as e:
-            print(f"[DEBUG] Error generating Cypher: {e}")
+            # Debug print removed for production cleanup
             return ""
 
     def _extract_cypher_from_mcp_response(self, result_data: Any) -> Optional[str]:

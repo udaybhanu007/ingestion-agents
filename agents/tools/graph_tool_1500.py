@@ -33,23 +33,27 @@ except ImportError:
         def get_config(self, section, key=None):
             configs = {
                 "openai": {
-                    "deployment_name": os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini"),
-                    "azure_api_version": os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview"),
                     "azure_endpoint": os.getenv("AZURE_OPENAI_ENDPOINT", ""),
-                    "azure_api_key": os.getenv("AZURE_OPENAI_API_KEY", ""),
+                    "azure_api_key": os.getenv("AZURE_OPENAI_API_KEY", "")
                 }
             }
             return configs.get(section, {}).get(key) if key else configs.get(section, {})
-        
-        @property
+
         def max_content_length(self):
-            return 50000
+            return int(os.getenv("MAX_CONTENT_LENGTH", "100000"))
 
     config_manager = MockConfig()
     logger = logging.getLogger("graph_tool")
 
 
 class GraphIngestionTool:
+    @staticmethod
+    def _sanitize_property_name(prop_name: str) -> str:
+        """Sanitize property names for Neo4j compatibility (no spaces or special chars)."""
+        import re
+        # Replace spaces and non-alphanumeric characters with underscores
+        return re.sub(r'[^a-zA-Z0-9_]', '_', prop_name)
+
     """
     Complete Neo4j Graph Ingestion Tool implementing the hybrid architecture:
     Document Ingestion → LLM Schema Discovery & Entity Extraction → MCP Server Validation & Execution
@@ -400,11 +404,61 @@ Response:
                 "stats": self.processing_stats
             }
 
+    def ingest_content(self, content: str, metadata: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Simplified entry point for document ingestion compatible with execution agent.
+        
+        This method acts as a wrapper around ingest_content_with_schema_validation
+        to maintain compatibility with the execution agent interface.
+        
+        Args:
+            content: Document content to process
+            metadata: Optional metadata dict (for compatibility, currently unused)
+            
+        Returns:
+            Dict with ingestion results compatible with execution agent expectations
+        """
+        try:
+            # Log metadata if provided for debugging
+            if metadata:
+                self.logger.info(f"Graph ingestion with metadata: {metadata}")
+            
+            # Call the main ingestion method
+            result = self.ingest_content_with_schema_validation(content)
+            
+            # Transform result to match expected execution agent format
+            return {
+                "success": result.get("success", False),
+                "nodes_created": result.get("entities_created", 0),  # Map entities to nodes
+                "relationships_created": result.get("relationships_created", 0),
+                "entities_ingested": result.get("entities_created", 0),
+                "method": result.get("method", "mcp_cypher_write"),
+                "stats": result.get("stats", {}),
+                "error": result.get("error") if not result.get("success") else None,
+                "pipeline": result.get("pipeline", "document_ingestion → llm_discovery → mcp_execution")
+            }
+            
+        except Exception as e:
+            error_msg = f"Graph ingestion wrapper failed: {str(e)}"
+            self.logger.error(error_msg)
+            return {
+                "success": False,
+                "error": error_msg,
+                "nodes_created": 0,
+                "relationships_created": 0,
+                "entities_ingested": 0
+            }
+
     def _preprocess_document(self, content: str) -> str:
         """
         Layer 1: Document Ingestion Layer - Preprocess and normalize input content.
         """
         try:
+            # Handle None or empty content
+            if content is None:
+                self.logger.warning("Content is None, using empty string")
+                return ""
+            
             # Basic content preprocessing
             processed = content.strip()
             
@@ -412,7 +466,7 @@ Response:
             processed = re.sub(r'\s+', ' ', processed)
             
             # Ensure reasonable content length
-            max_length = getattr(config_manager, 'max_content_length', 100000)
+            max_length = config_manager.max_content_length()
             if len(processed) > max_length:
                 processed = processed[:max_length]
                 self.logger.warning(f"Content truncated to {max_length} characters for processing")
@@ -708,67 +762,75 @@ Response:
                     # Handle entity instances that can be nested under sub-sections or stand-alone
                     if (line.startswith("Entity Instance:") or line.startswith("**Entity Instance:") or
                         (line.startswith("-") and "Entity Instance:" in line)):
-                        
                         # Extract the instance line, handling both formats:
-                        # "Entity Instance: EntityType|UniqueID|Property1=Value1,Property2=Value2,..."
-                        # "**Entity Instance: EntityType|UniqueID|Property1=Value1,Property2=Value2,...**"
-                        # "- Entity Instance: EntityType|UniqueID|Property1=Value1,Property2=Value2,..."
                         instance_line = line.strip("*").strip()
                         if instance_line.startswith("-"):
                             instance_line = instance_line[1:].strip()  # Remove leading dash
-                        
                         # Parse format: Entity Instance: EntityType|UniqueID|Property1=Value1,Property2=Value2,...
-                        instance_parts = instance_line.split(":", 1)[1].strip().split("|")
-                        if len(instance_parts) >= 3:
-                            entity_type = instance_parts[0].strip()
-                            entity_id = instance_parts[1].strip()
-                            properties_str = instance_parts[2].strip()
-                            
-                            print(f"DEBUG: Parsing entity instance: {entity_type} {entity_id}")
-                            
-                            # Parse properties with better error handling
+                        try:
+                            instance_parts = instance_line.split(":", 1)[1].strip().split("|")
+                            entity_type = instance_parts[0].strip() if len(instance_parts) > 0 else "Entity"
+                            entity_id = instance_parts[1].strip() if len(instance_parts) > 1 else ""
+                            properties_str = instance_parts[2].strip() if len(instance_parts) > 2 else ""
                             properties = {}
                             if properties_str:
                                 for prop_pair in properties_str.split(","):
                                     if "=" in prop_pair:
-                                        try:
-                                            key, value = prop_pair.split("=", 1)
-                                            key_clean = key.strip()
-                                            value_clean = value.strip().strip('"\'')  # Remove quotes
-                                            properties[key_clean] = value_clean
-                                        except Exception as e:
-                                            self.logger.warning(f"Failed to parse property pair '{prop_pair}': {e}")
-                                            continue
-                            
+                                        key, value = prop_pair.split("=", 1)
+                                        key_clean = key.strip()
+                                        value_clean = value.strip().strip('"\'')
+                                        properties[key_clean] = value_clean
                             # Add ID to properties
                             properties["id"] = entity_id
-                            
-                            # Create entity instance
                             entity_instance = {
                                 "type": entity_type,
                                 "entity_id": entity_id,
                                 "properties": properties
                             }
+                            print(f"DEBUG: Robust entity parsed: {entity_type} {entity_id} | Properties: {properties}")
                             extracted_entities.append(entity_instance)
-                    elif line and not line.startswith("---") and not line.startswith("**"):
-                        # Parse relationship instances: "SourceEntity SourceID RELATIONSHIP_TYPE TargetEntity"
-                        parts = line.split()
-                        if len(parts) >= 4:
-                            source_entity = parts[0]
-                            source_id = parts[1]
-                            rel_type = parts[2]
-                            target_entity = " ".join(parts[3:])  # Handle multi-word entity names
-                            
-                            # Create relationship instance
-                            rel_instance = {
-                                "type": rel_type,
-                                "from": source_id,
-                                "to": target_entity,
-                                "start_node_label": source_entity,
-                                "end_node_label": target_entity.split()[0] if " " in target_entity else target_entity,
-                                "properties": {}
-                            }
-                            extracted_relationships.append(rel_instance)
+                        except Exception as e:
+                            print(f"DEBUG: Entity instance parsing error: {e} | line: {instance_line}")
+                    elif line and not line.startswith("---") and not line.startswith("**") and not line.startswith("####"):
+                        # Check if this line looks like a relationship instance within the data instances section
+                        # Format: "SourceEntityType SourceID RELATIONSHIP_TYPE TargetEntityType TargetID"
+                        # Or: "SourceEntityType SourceID RELATIONSHIP_TYPE TargetEntityType TargetID MoreWords"
+                        parts = line.strip().split()
+                        if len(parts) >= 4 and len(parts[0]) > 0 and len(parts[2]) > 0:
+                            # Check if this looks like a relationship (second word is an ID, third is relationship type)
+                            if (parts[2].isupper() or "_" in parts[2]) and not "Entity Instance:" in line:
+                                # This looks like a relationship instance, not an entity instance
+                                source_entity_type = parts[0]
+                                source_id = parts[1] 
+                                rel_type = parts[2]
+                                
+                                # Handle target entity + target ID (can be multiple words)
+                                if len(parts) >= 5:
+                                    target_entity_type = parts[3]
+                                    target_id = " ".join(parts[4:])
+                                else:
+                                    # Handle 4-part format: "Image 00000001_000.png HAS_FINDING Finding Cardiomegaly"
+                                    # The target is a single entity type + entity ID combined
+                                    target_parts = parts[3].split()
+                                    if len(target_parts) >= 2:
+                                        target_entity_type = target_parts[0]
+                                        target_id = " ".join(target_parts[1:])
+                                    else:
+                                        target_entity_type = parts[3] 
+                                        target_id = parts[3]  # Fallback
+                                
+                                print(f"DEBUG: Found relationship in data_instances: {source_entity_type} {source_id} -{rel_type}-> {target_entity_type} {target_id}")
+                                
+                                # Create relationship instance
+                                rel_instance = {
+                                    "type": rel_type,
+                                    "from": source_id,
+                                    "to": target_id,
+                                    "start_node_label": source_entity_type,
+                                    "end_node_label": target_entity_type,
+                                    "properties": {}
+                                }
+                                extracted_relationships.append(rel_instance)
                 
                 elif current_section == "relationship_instances":
                     # Parse relationship instances in multiple formats:
@@ -777,7 +839,7 @@ Response:
                     # Format 3: "- SourceEntityType SourceID RELATIONSHIP_TYPE TargetEntityType TargetID"
                     
                     if (line and not line.startswith("===") and not line.startswith("---") and 
-                        not line.startswith("NOTES") and not line.startswith("...") and
+                        not line.startswith("NOTES") and not line.startswith("...") and not line.startswith("####") and
                         not ":" in line):  # Exclude section headers and notes
                         
                         line_content = line.strip("*").strip()
@@ -785,17 +847,35 @@ Response:
                             line_content = line_content[1:].strip()  # Remove leading dash
                         
                         # Skip empty lines or lines that look like descriptions
-                        if (not line_content or len(line_content.split()) < 5 or 
+                        if (not line_content or len(line_content.split()) < 4 or 
                             line_content.startswith("(") or "Continue" in line_content):
                             continue
                             
                         parts = line_content.split()
-                        if len(parts) >= 5:
+                        # Handle both 4-part and 5+ part relationship formats
+                        if len(parts) >= 4:
                             source_entity_type = parts[0]
                             source_id = parts[1]
                             rel_type = parts[2]
-                            target_entity_type = parts[3]
-                            target_id = " ".join(parts[4:])  # Handle multi-word target IDs
+                            
+                            if len(parts) >= 5:
+                                # Format: "Patient 1 HAS_IMAGE Image 00000001_000.png" 
+                                target_entity_type = parts[3]
+                                target_id = " ".join(parts[4:])  # Handle multi-word target IDs
+                            else:
+                                # Format: "Image 00000001_000.png HAS_FINDING FindingCardiomegaly"
+                                # Need to split the target into entity type and ID
+                                target_combined = parts[3]
+                                if target_combined.startswith("Finding"):
+                                    target_entity_type = "Finding"
+                                    target_id = target_combined[7:]  # Remove "Finding" prefix
+                                elif target_combined.startswith("Image"):
+                                    target_entity_type = "Image"  
+                                    target_id = target_combined[5:]  # Remove "Image" prefix
+                                else:
+                                    # Fallback: treat as entity type + entity ID combined
+                                    target_entity_type = "Entity"
+                                    target_id = target_combined
                             
                             # DYNAMIC VALIDATION: Validate structure and format rather than specific values
                             # Get dynamic entity types from discovered schema
@@ -856,18 +936,17 @@ Response:
                 if (entity.get("type") and entity.get("entity_id") and
                     self._is_valid_entity_type_name(entity.get("type", "")) and
                     (not discovered_entity_types or entity.get("type") in discovered_entity_types)):
-                    
+                    # Debug print for every valid entity
+                    print(f"DEBUG: Valid entity parsed: type={entity.get('type')}, id={entity.get('entity_id')}, properties={entity.get('properties')}")
                     # Ensure properties dict exists
                     if "properties" not in entity:
                         entity["properties"] = {}
-                    
                     # Add the entity_id to properties if not present
                     if "id" not in entity["properties"]:
                         entity["properties"]["id"] = entity["entity_id"]
-                    
                     valid_entities.append(entity)
                 else:
-                    self.logger.warning(f"Skipping invalid entity (dynamic validation): {entity}")
+                    print(f"DEBUG: Skipping invalid entity (dynamic validation): {entity}")
             
             valid_relationships = []
             discovered_relationship_types = [rt.get("type", "") for rt in relationship_types if rt.get("type")]
@@ -1040,29 +1119,45 @@ Response:
 
             # Create node definitions for each entity type
             nodes = []
-            for entity_type, entities in node_groups.items():
+
+            # Only use entity types from LLM response
+            valid_entity_types = set(et.get("type") for et in entity_types if et.get("type"))
+
+            # Filter relationships: only keep those where both start and end node labels are present in entity_types
+            filtered_relationships = []
+            for rel in extracted_relationships:
+                start_label = rel.get("start_node_label")
+                end_label = rel.get("end_node_label")
+                if start_label in valid_entity_types and end_label in valid_entity_types:
+                    filtered_relationships.append(rel)
+                else:
+                    self.logger.warning(f"Skipping relationship {rel.get('type','?')} due to missing node type: {start_label} or {end_label} not in entity_types")
+
+            # Only build nodes for entity types in entity_types
+            for entity_type in valid_entity_types:
+                entities = node_groups.get(entity_type, [])
                 # Find the corresponding entity type definition
                 type_def = next((et for et in entity_types if et.get("type") == entity_type), None)
-                
+
                 # Collect all properties from all entities of this type
                 all_properties = set()
                 for entity in entities:
                     all_properties.update(entity.get("properties", {}).keys())
-                
+
                 # Also add properties from type definition if available
                 if type_def and type_def.get("properties"):
                     all_properties.update(type_def["properties"])
-                
+
                 # Ensure 'id' property exists
                 if "id" not in all_properties:
                     all_properties.add("id")
-                
+
                 # Build property schema for MCP
                 property_schema = []
                 for prop_name in sorted(all_properties):
                     prop_obj = {"name": prop_name, "type": "string"}  # Default to string
                     property_schema.append(prop_obj)
-                
+
                 # Prepare all records for this entity type
                 records = []
                 for idx, entity in enumerate(entities):
@@ -1071,7 +1166,7 @@ Response:
                     if "id" not in props:
                         entity_id = entity.get("entity_id", f"auto_id_{entity_type}_{idx+1}")
                         props["id"] = entity_id
-                    
+
                     # Create record with all expected properties - avoid NULL values
                     record = {}
                     for prop_name in all_properties:
@@ -1081,12 +1176,12 @@ Response:
                             value = ""
                         record[prop_name] = str(value)  # Ensure string type
                     records.append(record)
-                
+
                 # Determine key property - always use 'id' to avoid NULL issues
                 key_property_name = "id"
                 # We force the use of 'id' as key property to avoid NULL key issues
                 # that were causing Neo4j merge errors
-                
+
                 # Create node definition
                 node = {
                     "label": entity_type,
@@ -1096,8 +1191,10 @@ Response:
                     "data_model": "auto"
                 }
                 nodes.append(node)
-                
+
                 self.logger.info(f"Created node group {entity_type} with {len(records)} records")
+
+            # Build relationships from filtered relationship instances - group by type
 
             # Build relationships from extracted relationship instances - group by type
             relationship_groups = {}
@@ -1525,17 +1622,51 @@ Response:
             return ""
 
     def _extract_cypher_from_mcp_response(self, result_data: Any) -> Optional[str]:
-        """Extract Cypher query from various MCP response formats."""
+        """Extract Cypher query from various MCP response formats and sanitize property keys in SET n += {...}."""
         try:
+            import re
+            # Helper to sanitize property keys in SET n += {...} clauses
+            def sanitize_set_clause(match):
+                set_body = match.group(1)
+                # Split by commas not inside brackets
+                props = re.split(r',(?![^\[]*\])', set_body)
+                sanitized_props = []
+                for prop in props:
+                    if ':' in prop:
+                        key, value = prop.split(':', 1)
+                        key_stripped = key.strip()
+                        # Remove possible quotes
+                        key_unquoted = key_stripped.strip('"\'')
+                        sanitized_key = self._sanitize_property_name(key_unquoted)
+                        # Try to find the referenced record property and sanitize it
+                        value_stripped = value.strip()
+                        # Match record.<property> (with possible brackets)
+                        value_match = re.match(r'record\.([a-zA-Z0-9_\[\]#\- ]+)', value_stripped)
+                        if value_match:
+                            orig_value_key = value_match.group(1)
+                            sanitized_value_key = self._sanitize_property_name(orig_value_key)
+                            sanitized_value = f"record.{sanitized_value_key}"
+                            sanitized_props.append(f"{sanitized_key}: {sanitized_value}")
+                        else:
+                            sanitized_props.append(f"{sanitized_key}: {value_stripped}")
+                    else:
+                        sanitized_props.append(prop)
+                return f"SET n += {{{', '.join(sanitized_props)}}}"
+
             # Handle structured content format
             if isinstance(result_data, dict) and "structuredContent" in result_data:
                 structured_content = result_data["structuredContent"]
                 if isinstance(structured_content, dict) and "result" in structured_content:
-                    return structured_content["result"]
+                    cypher = structured_content["result"]
+                    # Sanitize SET n += {...} property keys
+                    cypher = re.sub(r'SET\s+n \+= \{([^}]*)\}', sanitize_set_clause, cypher)
+                    return cypher
 
             # Handle direct string result
             if isinstance(result_data, str):
-                return result_data.strip()
+                cypher = result_data.strip()
+                cypher = re.sub(r'SET\s+n \+= \{([^}]*)\}', sanitize_set_clause, cypher)
+                return cypher
 
             # Handle content array format
             if isinstance(result_data, dict) and "content" in result_data:
@@ -1543,11 +1674,15 @@ Response:
                 if isinstance(content, list) and len(content) > 0:
                     first_content = content[0]
                     if isinstance(first_content, dict) and "text" in first_content:
-                        return first_content["text"].strip()
+                        cypher = first_content["text"].strip()
+                        cypher = re.sub(r'SET\s+n \+= \{([^}]*)\}', sanitize_set_clause, cypher)
+                        return cypher
 
             # Handle direct result field
             if isinstance(result_data, dict) and "result" in result_data:
-                return result_data["result"]
+                cypher = result_data["result"]
+                cypher = re.sub(r'SET\s+n \+= \{([^}]*)\}', sanitize_set_clause, cypher)
+                return cypher
 
             return None
 
@@ -1556,20 +1691,15 @@ Response:
             return None
 
     def _prepare_node_records(self, node: Dict[str, Any], entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Prepare node records for MCP Cypher ingestion with correct parameter format."""
+        """Prepare node records for MCP Cypher ingestion with correct parameter format and sanitized property names."""
         try:
             records = []
             node_label = node.get("label", "")
             data_model = node.get("data_model", "auto")
-            
             for entity in entities:
                 if entity.get("type") == node_label:
-                    # Prepare record with all entity properties
-                    record = {
-                        "data_model": data_model  # Add data_model to each record
-                    }
+                    record = {"data_model": data_model}
                     properties = entity.get("properties", {})
-                    
                     # Get expected property names from node schema
                     expected_properties = []
                     for prop_def in node.get("properties", []):
@@ -1577,44 +1707,38 @@ Response:
                             expected_properties.append(prop_def["name"])
                         elif isinstance(prop_def, str):
                             expected_properties.append(prop_def)
-                    
-                    # Ensure required properties exist
+                    # Ensure required properties exist (sanitize names)
                     for prop_name in expected_properties:
+                        sanitized = self._sanitize_property_name(prop_name)
                         if prop_name in properties:
-                            record[prop_name] = properties[prop_name]
+                            record[sanitized] = properties[prop_name]
                         else:
-                            record[prop_name] = None  # Default value for missing properties
-                    
-                    # Add any additional properties from the entity
+                            record[sanitized] = None
+                    # Add any additional properties from the entity (sanitize names)
                     for prop_name, prop_value in properties.items():
-                        if prop_name not in record:
-                            record[prop_name] = prop_value
-                    
+                        sanitized = self._sanitize_property_name(prop_name)
+                        if sanitized not in record:
+                            record[sanitized] = prop_value
                     records.append(record)
-            
             self.logger.debug(f"Prepared {len(records)} records for node type {node_label}")
             return records
-
         except Exception as e:
             self.logger.error(f"Failed to prepare node records: {str(e)}")
             return []
 
     def _prepare_relationship_records(self, relationship: Dict[str, Any], relationships: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Prepare relationship records for MCP Cypher ingestion with correct parameter format (sourceId, targetId, properties flat)."""
+        """Prepare relationship records for MCP Cypher ingestion with correct parameter format (sourceId, targetId, properties flat, sanitized property names)."""
         try:
             records = []
             rel_type = relationship.get("type", "")
             data_model = relationship.get("data_model", "auto")
-
             for rel in relationships:
                 if rel.get("type") == rel_type:
-                    # MCP expects sourceId and targetId, plus direct relationship properties
                     record = {
                         "sourceId": rel.get("from", ""),
                         "targetId": rel.get("to", ""),
-                        "data_model": data_model  # Add data_model to each record
+                        "data_model": data_model
                     }
-                    
                     # Get expected property names from relationship schema
                     expected_properties = []
                     for prop_def in relationship.get("properties", []):
@@ -1622,22 +1746,19 @@ Response:
                             expected_properties.append(prop_def["name"])
                         elif isinstance(prop_def, str):
                             expected_properties.append(prop_def)
-                    
-                    # Add relationship properties (flattened)
+                    # Add relationship properties (flattened, sanitized)
                     rel_props = rel.get("properties", {})
                     for prop_name in expected_properties:
+                        sanitized = self._sanitize_property_name(prop_name)
                         if prop_name in rel_props:
-                            record[prop_name] = rel_props[prop_name]
-                    
+                            record[sanitized] = rel_props[prop_name]
                     # Only add if both sourceId and targetId are present
                     if record["sourceId"] and record["targetId"]:
                         records.append(record)
                     else:
                         self.logger.warning(f"Skipping relationship record missing required node identifiers: {record}")
-
             self.logger.debug(f"Prepared {len(records)} records for relationship type {rel_type}")
             return records
-
         except Exception as e:
             self.logger.error(f"Failed to prepare relationship records: {str(e)}")
             return []
@@ -1676,7 +1797,7 @@ Response:
             }
             
             response = requests.post(
-                f"{server_url}/mcp",
+                f"{server_url}/mcp/",
                 json=request_payload,
                 headers=headers,
                 timeout=30
@@ -1833,157 +1954,174 @@ Log File Location: {getattr(self, 'mcp_log_file', 'Not configured')}
         except Exception as e:
             self.logger.error(f"Failed to log MCP summary: {str(e)}")
 
-    def get_processing_stats(self) -> Dict[str, Any]:
-        """Get current processing statistics."""
-        return self.processing_stats.copy()
-
-    def reset_processing_stats(self):
-        """Reset processing statistics."""
-        self.initialize_processing_stats()
-
-
-# Usage Example and Main Function
-def main():
-    """
-    Example usage of the GraphIngestionTool
-    """
-    # Initialize the tool
-    tool = GraphIngestionTool()
-    
-
-    # Generic document ingestion: parse CSV or text, synthesize key property, format for LLM
-    # doc_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "doc", "Data_Entry_2017.csv")
-    doc_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "doc", "BBox_List_2017.csv")
-    summary_blocks = []
-    try:
-        with open(doc_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-            header = [h.strip() for h in lines[0].strip().split(",")]
-            for idx, line in enumerate(lines[1:], 1):
-                parts = [p.strip() for p in line.strip().split(",")]
-                entity = {header[i]: parts[i] for i in range(min(len(header), len(parts)))}
-                # Always add a synthetic key property if not present
-                if "id" not in entity:
-                    entity["id"] = f"row_{idx}"  # Unique per row
-                block = f"Entity {idx}:\n" + json.dumps(entity, indent=2)
-                summary_blocks.append(block)
-        formatted_content = "\n\n".join(summary_blocks)
-    except Exception as e:
-        print(f"Error reading document: {e}")
-        formatted_content = ""
-
-
-    # CHUNKING LOGIC COMMENTED OUT - Process all data at once instead
-    # chunk_size = 15  # Reduced from 25 to improve LLM success rate
-    # total_chunks = min(2, (len(summary_blocks) + chunk_size - 1) // chunk_size)  # Process only 2 chunks for testing
-    # all_results = []
-    # print(f"FINAL TEST: Processing Data_Entry_2017.csv for ingestion in {total_chunks} chunks (size: {chunk_size})...")
-
-    # for i in range(0, min(2 * chunk_size, len(summary_blocks)), chunk_size):
-    #     chunk_blocks = summary_blocks[i:i+chunk_size]
-    #     chunk_content = "\n".join(chunk_blocks)
-    #     chunk_num = i//chunk_size+1
-    #     print(f"\n--- Processing chunk {chunk_num}/{total_chunks} ---")
-    #     # Minimal logging for performance
-    #     print(f"  Chunk size: {len(chunk_blocks)} entities")
-    #     result = tool.ingest_content_with_schema_validation(chunk_content)
-    #     all_results.append(result)
-    #     print(f"  Success: {result.get('success', False)} | Entities: {result.get('entities_created', 0)} | Relationships: {result.get('relationships_created', 0)} | Confidence: {result.get('schema_confidence', 0.0):.2f}")
-    #     # Only show errors, not full debug details
-    #     if not result.get('success', True):
-    #         print(f"  Error: {result.get('error', 'Unknown error')}")
-
-    # PROCESS ALL DATA IN CHUNKS: Process entire dataset in manageable chunks
-    print(f"Processing ENTIRE Data_Entry_2017.csv dataset in chunks...")
-    print(f"Total entities to process: {len(summary_blocks)}")
-    
-    # Process in chunks to handle large dataset efficiently
-    chunk_size = 500  # Process 500 entities at a time (reduced for better LLM handling)
-    total_chunks = (len(summary_blocks) + chunk_size - 1) // chunk_size
-    all_results = []
-    total_entities_created = 0
-    total_relationships_created = 0
-    
-    print(f"Processing {len(summary_blocks)} entities in {total_chunks} chunks of {chunk_size}...")
-    
-    for chunk_idx in range(total_chunks):
-        start_idx = chunk_idx * chunk_size
-        end_idx = min(start_idx + chunk_size, len(summary_blocks))
-        chunk_blocks = summary_blocks[start_idx:end_idx]
-        chunk_content = "\n\n".join(chunk_blocks)
-        
-        print(f"\n--- Processing chunk {chunk_idx + 1}/{total_chunks} (entities {start_idx + 1}-{end_idx}) ---")
-        
+    def _llm_schema_discovery_and_extraction(self, content: str) -> Dict[str, Any]:
+        """
+        Layer 2: LLM Schema Discovery & Entity Extraction (with chunking for large content)
+        """
         try:
-            result = tool.ingest_content_with_schema_validation(chunk_content)
-            all_results.append(result)
+            self.logger.info("Starting LLM schema discovery and entity extraction with chunking...")
+
+            # Handle None or empty content
+            if content is None:
+                self.logger.warning("Content is None, returning empty result")
+                return {
+                    "success": True,
+                    "extracted_entities": [],
+                    "extracted_relationships": [],
+                    "entity_types": [],
+                    "relationship_types": [],
+                    "errors": ["Content is None"]
+                }
             
-            # Accumulate results
-            entities_created = result.get('entities_created', 0)
-            relationships_created = result.get('relationships_created', 0)
-            total_entities_created += entities_created
-            total_relationships_created += relationships_created
-            
-            print(f"  Chunk Success: {result.get('success', False)}")
-            print(f"  Entities Created: {entities_created}")
-            print(f"  Relationships Created: {relationships_created}")
-            
-            if not result.get('success', False):
-                print(f"  Error: {result.get('error', 'Unknown error')}")
-                
+            if not content.strip():
+                self.logger.warning("Content is empty, returning empty result")
+                return {
+                    "success": True,
+                    "extracted_entities": [],
+                    "extracted_relationships": [],
+                    "entity_types": [],
+                    "relationship_types": [],
+                    "errors": ["Content is empty"]
+                }
+
+            # --- Chunking logic: split content into chunks (default: 2000 lines per chunk) ---
+            max_lines_per_chunk = 2000
+            lines = content.splitlines()
+            chunks = ["\n".join(lines[i:i+max_lines_per_chunk]) for i in range(0, len(lines), max_lines_per_chunk)]
+            self.logger.info(f"Content split into {len(chunks)} chunk(s) for LLM extraction.")
+
+            all_entities = []
+            all_relationships = []
+            all_entity_types = []
+            all_relationship_types = []
+            stats = {"schemas_discovered": 0, "entities_extracted": 0}
+            errors = []
+
+            for chunk_idx, chunk in enumerate(chunks):
+                self.logger.info(f"Processing chunk {chunk_idx+1}/{len(chunks)} (length: {len(chunk)} chars)...")
+                enhanced_prompt = f"""
+                You are an expert data analyst and knowledge graph architect. Analyze the provided content and perform comprehensive schema discovery and entity extraction for knowledge graph construction.
+
+                TASK OVERVIEW:
+                1. Identify the data domain and format (CSV, JSON, etc.)
+                2. Discover entity types and their properties
+                3. Identify relationships between entities
+                4. Extract ALL individual data records as entity instances
+                5. Create relationship instances between entities
+
+                SCHEMA DISCOVERY:
+                - Analyze ALL columns/fields to identify distinct entity types
+                - Group related attributes under logical entity types  
+                - Identify primary keys and relationships between entities
+                - Use clear, descriptive names (PascalCase for entities, UPPER_CASE for relationships)
+
+                ENTITY EXTRACTION:
+                - Extract ALL data records as entities with complete attribute sets
+                - Use ORIGINAL data values as IDs - DO NOT add prefixes like FND_, PAT_, IMG_, etc.
+                - If ID field exists, use it exactly as provided in source data
+                - For entities without explicit IDs, create simple numeric or descriptive IDs
+                - Preserve all data values exactly as they appear in source and handle missing values appropriately
+
+                RELATIONSHIP EXTRACTION:
+                - Identify direct references (foreign keys, shared IDs)
+                - Create relationship instances for detected connections
+                - Use semantic relationships based on domain knowledge
+
+                Content to analyze:
+                {chunk}
+
+                RESPONSE FORMAT (Use clear section headers, not JSON):
+
+                === EXTRACTED ENTITY LIST ===
+                Entity Type: <EntityTypeName>
+                Properties: <comma-separated list of properties>
+                Key Property: <primary identifier property>
+
+                === EXTRACTED RELATIONSHIP LIST ===
+                Relationship Type: <RELATIONSHIP_NAME>
+                Start Entity: <StartEntityType>
+                End Entity: <EndEntityType>
+                Cardinality: <1:1|1:many|many:many>
+
+                === DATA INSTANCES ===
+                Entity Instance: <EntityType>|<UniqueID>|<Property1=Value1,Property2=Value2,...>
+
+                === RELATIONSHIP INSTANCES ===
+                <SourceEntityType> <SourceID> <RELATIONSHIP_TYPE> <TargetEntityType> <TargetID>
+
+                REQUIREMENTS:
+                - Extract ALL data records completely
+                - Use consistent naming conventions  
+                - Use ORIGINAL data values as entity IDs - NO artificial prefixes
+                - Preserve exact field values from source data (e.g., "Cardiomegaly", not "FND_Cardiomegaly")
+                - Create meaningful relationships based on data connections
+                """
+
+                if not self.llm:
+                    self.logger.error("LLM client not available")
+                    return {"success": False, "error": "LLM client not initialized"}
+
+                self.logger.info(f"Making LLM request for chunk {chunk_idx+1}...")
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        self.logger.info(f"LLM request attempt {attempt + 1}/{max_retries}")
+                        response = self.llm.invoke(enhanced_prompt)
+                        response_text = response.content if hasattr(response, 'content') else str(response)
+                        with open(f"debug_current_llm_response_chunk{chunk_idx+1}.txt", "w", encoding="utf-8") as f:
+                            f.write(response_text)
+                        self.logger.info(f"LLM response received for chunk {chunk_idx+1}, length: {len(response_text)} characters")
+                        break
+                    except Exception as e:
+                        error_details = f"LLM attempt {attempt + 1} failed: {str(e)}"
+                        self.logger.warning(error_details)
+                        if attempt == max_retries - 1:
+                            final_error = f"LLM failed after {max_retries} attempts: {str(e)}"
+                            self.logger.error(final_error)
+                            errors.append(final_error)
+                            continue
+                        import time
+                        time.sleep(2 ** attempt)
+
+                # Parse the structured response for this chunk
+                parsed_result = self._parse_structured_llm_response(response_text)
+                if parsed_result.get("success"):
+                    all_entities.extend(parsed_result.get("extracted_entities", []))
+                    all_relationships.extend(parsed_result.get("extracted_relationships", []))
+                    all_entity_types.extend(parsed_result.get("entity_types", []))
+                    all_relationship_types.extend(parsed_result.get("relationship_types", []))
+                    stats["schemas_discovered"] += 1
+                    stats["entities_extracted"] += len(parsed_result.get("extracted_entities", []))
+                else:
+                    errors.append(parsed_result.get("error", "Unknown error in chunk parsing"))
+
+            # Deduplicate entity types and relationship types by 'type' field
+            def dedup_by_type(items):
+                seen = set()
+                deduped = []
+                for item in items:
+                    t = item.get("type")
+                    if t and t not in seen:
+                        seen.add(t)
+                        deduped.append(item)
+                return deduped
+            all_entity_types = dedup_by_type(all_entity_types)
+            all_relationship_types = dedup_by_type(all_relationship_types)
+
+            self.processing_stats["schemas_discovered"] += stats["schemas_discovered"]
+            self.processing_stats["entities_extracted"] += stats["entities_extracted"]
+
+            self.logger.info(f"LLM chunked processing completed - Entities: {len(all_entities)}, Relationships: {len(all_relationships)}")
+
+            return {
+                "success": len(errors) == 0,
+                "extracted_entities": all_entities,
+                "extracted_relationships": all_relationships,
+                "entity_types": all_entity_types,
+                "relationship_types": all_relationship_types,
+                "errors": errors
+            }
         except Exception as e:
-            print(f"  Chunk {chunk_idx + 1} failed with exception: {str(e)}")
-            all_results.append({
-                'success': False, 
-                'error': str(e),
-                'entities_created': 0,
-                'relationships_created': 0
-            })
-    
-    # Create summary result
-    result = {
-        'success': all(r.get('success', False) for r in all_results),
-        'entities_created': total_entities_created,
-        'relationships_created': total_relationships_created,
-        'schema_confidence': sum(r.get('schema_confidence', 0.0) for r in all_results) / len(all_results) if all_results else 0.0,
-        'chunks_processed': len(all_results)
-    }
-    
-    print(f"\n--- COMPLETE DATASET PROCESSING RESULT ---")
-    print(f"Success: {result.get('success', False)}")
-    print(f"Total Entities Created: {result.get('entities_created', 0)}")
-    print(f"Total Relationships Created: {result.get('relationships_created', 0)}")
-    print(f"Chunks Processed: {result.get('chunks_processed', 0)}")
-    print(f"Average Schema Confidence: {result.get('schema_confidence', 0.0):.2f}")
-    
-    if not result.get('success', True):
-        print(f"Error: {result.get('error', 'Unknown error')}")
-        
-    # Set results for summary
-    total_entities = result.get('entities_created', 0)
-    total_relationships = result.get('relationships_created', 0)
-    avg_confidence = result.get('schema_confidence', 0.0)
-
-    print("\n=== CHUNKED BATCH INGESTION SUMMARY ===")
-    print(f"Processing Mode: Chunked processing ({chunk_size} entities per chunk)")
-    print(f"Total Entities Created: {total_entities}")
-    print(f"Total Relationships Created: {total_relationships}")
-    print(f"Schema Confidence: {avg_confidence:.2f}")
-    print(f"Dataset Size: {len(summary_blocks)} entities processed in {total_chunks} chunks")
-    print(f"Successful Chunks: {sum(1 for r in all_results if r.get('success', False))}/{len(all_results)}")
-
-    # Display error if any exist
-    if not result.get('success', True):
-        print(f"\nError: {result.get('error', 'Unknown error')}")
-    else:
-        print("\nSuccess - entire dataset processed successfully!")
-
-    # Display MCP API request summary
-    print("\n" + "="*80)
-    print("MCP API REQUESTS SUMMARY")
-    print("="*80)
-    tool.log_mcp_summary()
-
-
-if __name__ == "__main__":
-    main()
+            error_msg = f"LLM schema discovery and extraction (chunked) failed: {str(e)}"
+            self.logger.error(error_msg)
+            return {"success": False, "error": error_msg}

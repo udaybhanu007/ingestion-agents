@@ -1,0 +1,317 @@
+=== EXTRACTED ENTITY LIST ===
+
+Entity Type: Image  
+Properties: ImageIndex, FollowUpNumber, PatientID, PatientAge, PatientGender, ViewPosition, OriginalImageWidth, OriginalImageHeight, OriginalImagePixelSpacingX, OriginalImagePixelSpacingY  
+Key Property: ImageIndex
+
+Entity Type: Patient  
+Properties: PatientID, PatientGender  
+Key Property: PatientID
+
+Entity Type: Finding  
+Properties: FindingLabel  
+Key Property: FindingLabel
+
+---
+
+=== EXTRACTED RELATIONSHIP LIST ===
+
+Relationship Type: HAS_IMAGE  
+Start Entity: Patient  
+End Entity: Image  
+Cardinality: 1:many
+
+Relationship Type: HAS_FINDING  
+Start Entity: Image  
+End Entity: Finding  
+Cardinality: many:many
+
+---
+
+=== DATA INSTANCES ===
+
+#### PATIENT INSTANCES
+Entity Instance: Patient|1|PatientID=1,PatientGender=M  
+Entity Instance: Patient|2|PatientID=2,PatientGender=M  
+Entity Instance: Patient|3|PatientID=3,PatientGender=F  
+Entity Instance: Patient|4|PatientID=4,PatientGender=M  
+Entity Instance: Patient|5|PatientID=5,PatientGender=F  
+Entity Instance: Patient|6|PatientID=6,PatientGender=M  
+Entity Instance: Patient|7|PatientID=7,PatientGender=M  
+Entity Instance: Patient|8|PatientID=8,PatientGender=F  
+Entity Instance: Patient|9|PatientID=9,PatientGender=M  
+Entity Instance: Patient|10|PatientID=10,PatientGender=F  
+Entity Instance: Patient|11|PatientID=11,PatientGender=M  
+Entity Instance: Patient|12|PatientID=12,PatientGender=M  
+Entity Instance: Patient|13|PatientID=13,PatientGender=M  
+Entity Instance: Patient|14|PatientID=14,PatientGender=F  
+Entity Instance: Patient|15|PatientID=15,PatientGender=M  
+Entity Instance: Patient|16|PatientID=16,PatientGender=M  
+Entity Instance: Patient|17|PatientID=17,PatientGender=M  
+Entity Instance: Patient|18|PatientID=18,PatientGender=M  
+Entity Instance: Patient|19|PatientID=19,PatientGender=M  
+Entity Instance: Patient|20|PatientID=20,PatientGender=M  
+Entity Instance: Patient|21|PatientID=21,PatientGender=M  
+Entity Instance: Patient|22|PatientID=22,PatientGender=M  
+
+#### FINDING INSTANCES  
+Entity Instance: Finding|Cardiomegaly|FindingLabel=Cardiomegaly  
+Entity Instance: Finding|Emphysema|FindingLabel=Emphysema  
+Entity Instance: Finding|Effusion|FindingLabel=Effusion  
+Entity Instance: Finding|No Finding|FindingLabel=No Finding  
+Entity Instance: Finding|Hernia|FindingLabel=Hernia  
+Entity Instance: Finding|Infiltration|FindingLabel=Infiltration  
+Entity Instance: Finding|Mass|FindingLabel=Mass  
+Entity Instance: Finding|Nodule|FindingLabel=Nodule  
+Entity Instance: Finding|Pleural_Thickening|FindingLabel=Pleural_Thickening  
+Entity Instance: Finding|Pneumothorax|FindingLabel=Pneumothorax  
+Entity Instance: Finding|Pneumonia|FindingLabel=Pneumonia  
+Entity Instance: Finding|Atelectasis|FindingLabel=Atelectasis  
+Entity Instance: Finding|Fibrosis|FindingLabel=Fibrosis  
+
+#### IMAGE INSTANCES  
+Entity Instance: Image|00000001_000.png|ImageIndex=00000001_000.png,FollowUpNumber=0,PatientID=1,PatientAge=58,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2682,OriginalImageHeight=2749,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000001_001.png|ImageIndex=00000001_001.png,FollowUpNumber=1,PatientID=1,PatientAge=58,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2894,OriginalImageHeight=2729,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000001_002.png|ImageIndex=00000001_002.png,FollowUpNumber=2,PatientID=1,PatientAge=58,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000002_000.png|ImageIndex=00000002_000.png,FollowUpNumber=0,PatientID=2,PatientAge=81,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.171,OriginalImagePixelSpacingY=0.171  
+Entity Instance: Image|00000003_000.png|ImageIndex=00000003_000.png,FollowUpNumber=0,PatientID=3,PatientAge=81,PatientGender=F,ViewPosition=PA,OriginalImageWidth=2582,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000003_001.png|ImageIndex=00000003_001.png,FollowUpNumber=1,PatientID=3,PatientAge=74,PatientGender=F,ViewPosition=PA,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000003_002.png|ImageIndex=00000003_002.png,FollowUpNumber=2,PatientID=3,PatientAge=75,PatientGender=F,ViewPosition=PA,OriginalImageWidth=2048,OriginalImageHeight=2500,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000003_003.png|ImageIndex=00000003_003.png,FollowUpNumber=3,PatientID=3,PatientAge=76,PatientGender=F,ViewPosition=PA,OriginalImageWidth=2698,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000003_004.png|ImageIndex=00000003_004.png,FollowUpNumber=4,PatientID=3,PatientAge=77,PatientGender=F,ViewPosition=PA,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000003_005.png|ImageIndex=00000003_005.png,FollowUpNumber=5,PatientID=3,PatientAge=78,PatientGender=F,ViewPosition=PA,OriginalImageWidth=2686,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000003_006.png|ImageIndex=00000003_006.png,FollowUpNumber=6,PatientID=3,PatientAge=79,PatientGender=F,ViewPosition=PA,OriginalImageWidth=2992,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000003_007.png|ImageIndex=00000003_007.png,FollowUpNumber=7,PatientID=3,PatientAge=80,PatientGender=F,ViewPosition=PA,OriginalImageWidth=2582,OriginalImageHeight=2905,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000004_000.png|ImageIndex=00000004_000.png,FollowUpNumber=0,PatientID=4,PatientAge=82,PatientGender=M,ViewPosition=AP,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000005_000.png|ImageIndex=00000005_000.png,FollowUpNumber=0,PatientID=5,PatientAge=69,PatientGender=F,ViewPosition=PA,OriginalImageWidth=2048,OriginalImageHeight=2500,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000005_001.png|ImageIndex=00000005_001.png,FollowUpNumber=1,PatientID=5,PatientAge=69,PatientGender=F,ViewPosition=AP,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000005_002.png|ImageIndex=00000005_002.png,FollowUpNumber=2,PatientID=5,PatientAge=69,PatientGender=F,ViewPosition=AP,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000005_003.png|ImageIndex=00000005_003.png,FollowUpNumber=3,PatientID=5,PatientAge=69,PatientGender=F,ViewPosition=PA,OriginalImageWidth=2992,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000005_004.png|ImageIndex=00000005_004.png,FollowUpNumber=4,PatientID=5,PatientAge=70,PatientGender=F,ViewPosition=PA,OriginalImageWidth=2986,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000005_005.png|ImageIndex=00000005_005.png,FollowUpNumber=5,PatientID=5,PatientAge=70,PatientGender=F,ViewPosition=PA,OriginalImageWidth=2514,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000005_006.png|ImageIndex=00000005_006.png,FollowUpNumber=6,PatientID=5,PatientAge=70,PatientGender=F,ViewPosition=PA,OriginalImageWidth=2992,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000005_007.png|ImageIndex=00000005_007.png,FollowUpNumber=7,PatientID=5,PatientAge=70,PatientGender=F,ViewPosition=PA,OriginalImageWidth=2566,OriginalImageHeight=2681,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000006_000.png|ImageIndex=00000006_000.png,FollowUpNumber=0,PatientID=6,PatientAge=81,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000007_000.png|ImageIndex=00000007_000.png,FollowUpNumber=0,PatientID=7,PatientAge=82,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000008_000.png|ImageIndex=00000008_000.png,FollowUpNumber=0,PatientID=8,PatientAge=69,PatientGender=F,ViewPosition=PA,OriginalImageWidth=2048,OriginalImageHeight=2500,OriginalImagePixelSpacingX=0.171,OriginalImagePixelSpacingY=0.171  
+Entity Instance: Image|00000008_001.png|ImageIndex=00000008_001.png,FollowUpNumber=1,PatientID=8,PatientAge=70,PatientGender=F,ViewPosition=PA,OriginalImageWidth=2048,OriginalImageHeight=2500,OriginalImagePixelSpacingX=0.171,OriginalImagePixelSpacingY=0.171  
+Entity Instance: Image|00000008_002.png|ImageIndex=00000008_002.png,FollowUpNumber=2,PatientID=8,PatientAge=73,PatientGender=F,ViewPosition=PA,OriginalImageWidth=2048,OriginalImageHeight=2500,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000009_000.png|ImageIndex=00000009_000.png,FollowUpNumber=0,PatientID=9,PatientAge=73,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2992,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000010_000.png|ImageIndex=00000010_000.png,FollowUpNumber=0,PatientID=10,PatientAge=84,PatientGender=F,ViewPosition=PA,OriginalImageWidth=2992,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000011_000.png|ImageIndex=00000011_000.png,FollowUpNumber=0,PatientID=11,PatientAge=75,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2638,OriginalImageHeight=2449,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000011_001.png|ImageIndex=00000011_001.png,FollowUpNumber=1,PatientID=11,PatientAge=75,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000011_002.png|ImageIndex=00000011_002.png,FollowUpNumber=2,PatientID=11,PatientAge=75,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2714,OriginalImageHeight=2781,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000011_003.png|ImageIndex=00000011_003.png,FollowUpNumber=3,PatientID=11,PatientAge=75,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000011_004.png|ImageIndex=00000011_004.png,FollowUpNumber=4,PatientID=11,PatientAge=75,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000011_005.png|ImageIndex=00000011_005.png,FollowUpNumber=5,PatientID=11,PatientAge=75,PatientGender=M,ViewPosition=AP,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000011_006.png|ImageIndex=00000011_006.png,FollowUpNumber=6,PatientID=11,PatientAge=75,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2992,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000011_007.png|ImageIndex=00000011_007.png,FollowUpNumber=7,PatientID=11,PatientAge=75,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2782,OriginalImageHeight=2753,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000011_008.png|ImageIndex=00000011_008.png,FollowUpNumber=8,PatientID=11,PatientAge=75,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2826,OriginalImageHeight=2685,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000012_000.png|ImageIndex=00000012_000.png,FollowUpNumber=0,PatientID=12,PatientAge=76,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2992,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000013_000.png|ImageIndex=00000013_000.png,FollowUpNumber=0,PatientID=13,PatientAge=61,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2021,OriginalImageHeight=2021,OriginalImagePixelSpacingX=0.194311,OriginalImagePixelSpacingY=0.194311  
+Entity Instance: Image|00000013_001.png|ImageIndex=00000013_001.png,FollowUpNumber=1,PatientID=13,PatientAge=60,PatientGender=M,ViewPosition=AP,OriginalImageWidth=3056,OriginalImageHeight=2544,OriginalImagePixelSpacingX=0.139,OriginalImagePixelSpacingY=0.139  
+Entity Instance: Image|00000013_002.png|ImageIndex=00000013_002.png,FollowUpNumber=2,PatientID=13,PatientAge=60,PatientGender=M,ViewPosition=AP,OriginalImageWidth=3056,OriginalImageHeight=2544,OriginalImagePixelSpacingX=0.139,OriginalImagePixelSpacingY=0.139  
+Entity Instance: Image|00000013_003.png|ImageIndex=00000013_003.png,FollowUpNumber=3,PatientID=13,PatientAge=60,PatientGender=M,ViewPosition=AP,OriginalImageWidth=2996,OriginalImageHeight=2544,OriginalImagePixelSpacingX=0.139,OriginalImagePixelSpacingY=0.139  
+Entity Instance: Image|00000013_004.png|ImageIndex=00000013_004.png,FollowUpNumber=4,PatientID=13,PatientAge=60,PatientGender=M,ViewPosition=AP,OriginalImageWidth=3056,OriginalImageHeight=2544,OriginalImagePixelSpacingX=0.139,OriginalImagePixelSpacingY=0.139  
+Entity Instance: Image|00000013_005.png|ImageIndex=00000013_005.png,FollowUpNumber=5,PatientID=13,PatientAge=60,PatientGender=M,ViewPosition=AP,OriginalImageWidth=3056,OriginalImageHeight=2544,OriginalImagePixelSpacingX=0.139,OriginalImagePixelSpacingY=0.139  
+Entity Instance: Image|00000013_006.png|ImageIndex=00000013_006.png,FollowUpNumber=6,PatientID=13,PatientAge=60,PatientGender=M,ViewPosition=AP,OriginalImageWidth=3056,OriginalImageHeight=2544,OriginalImagePixelSpacingX=0.139,OriginalImagePixelSpacingY=0.139  
+Entity Instance: Image|00000013_007.png|ImageIndex=00000013_007.png,FollowUpNumber=7,PatientID=13,PatientAge=60,PatientGender=M,ViewPosition=AP,OriginalImageWidth=3056,OriginalImageHeight=2544,OriginalImagePixelSpacingX=0.139,OriginalImagePixelSpacingY=0.139  
+Entity Instance: Image|00000013_008.png|ImageIndex=00000013_008.png,FollowUpNumber=8,PatientID=13,PatientAge=60,PatientGender=M,ViewPosition=AP,OriginalImageWidth=3056,OriginalImageHeight=2544,OriginalImagePixelSpacingX=0.139,OriginalImagePixelSpacingY=0.139  
+Entity Instance: Image|00000013_009.png|ImageIndex=00000013_009.png,FollowUpNumber=9,PatientID=13,PatientAge=60,PatientGender=M,ViewPosition=AP,OriginalImageWidth=3056,OriginalImageHeight=2544,OriginalImagePixelSpacingX=0.139,OriginalImagePixelSpacingY=0.139  
+Entity Instance: Image|00000013_010.png|ImageIndex=00000013_010.png,FollowUpNumber=10,PatientID=13,PatientAge=60,PatientGender=M,ViewPosition=AP,OriginalImageWidth=3056,OriginalImageHeight=2544,OriginalImagePixelSpacingX=0.139,OriginalImagePixelSpacingY=0.139  
+Entity Instance: Image|00000013_011.png|ImageIndex=00000013_011.png,FollowUpNumber=11,PatientID=13,PatientAge=60,PatientGender=M,ViewPosition=AP,OriginalImageWidth=3056,OriginalImageHeight=2544,OriginalImagePixelSpacingX=0.139,OriginalImagePixelSpacingY=0.139  
+Entity Instance: Image|00000013_012.png|ImageIndex=00000013_012.png,FollowUpNumber=12,PatientID=13,PatientAge=60,PatientGender=M,ViewPosition=AP,OriginalImageWidth=3056,OriginalImageHeight=2544,OriginalImagePixelSpacingX=0.139,OriginalImagePixelSpacingY=0.139  
+Entity Instance: Image|00000013_013.png|ImageIndex=00000013_013.png,FollowUpNumber=13,PatientID=13,PatientAge=60,PatientGender=M,ViewPosition=AP,OriginalImageWidth=3056,OriginalImageHeight=2544,OriginalImagePixelSpacingX=0.139,OriginalImagePixelSpacingY=0.139  
+Entity Instance: Image|00000013_014.png|ImageIndex=00000013_014.png,FollowUpNumber=14,PatientID=13,PatientAge=61,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2021,OriginalImageHeight=2021,OriginalImagePixelSpacingX=0.194311,OriginalImagePixelSpacingY=0.194311  
+Entity Instance: Image|00000013_015.png|ImageIndex=00000013_015.png,FollowUpNumber=15,PatientID=13,PatientAge=61,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2020,OriginalImageHeight=2021,OriginalImagePixelSpacingX=0.194311,OriginalImagePixelSpacingY=0.194311  
+Entity Instance: Image|00000013_016.png|ImageIndex=00000013_016.png,FollowUpNumber=16,PatientID=13,PatientAge=61,PatientGender=M,ViewPosition=PA,OriginalImageWidth=1725,OriginalImageHeight=2021,OriginalImagePixelSpacingX=0.194311,OriginalImagePixelSpacingY=0.194311  
+Entity Instance: Image|00000013_017.png|ImageIndex=00000013_017.png,FollowUpNumber=17,PatientID=13,PatientAge=61,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2021,OriginalImageHeight=2021,OriginalImagePixelSpacingX=0.194311,OriginalImagePixelSpacingY=0.194311  
+Entity Instance: Image|00000013_018.png|ImageIndex=00000013_018.png,FollowUpNumber=18,PatientID=13,PatientAge=60,PatientGender=M,ViewPosition=AP,OriginalImageWidth=3056,OriginalImageHeight=2544,OriginalImagePixelSpacingX=0.139,OriginalImagePixelSpacingY=0.139  
+Entity Instance: Image|00000013_019.png|ImageIndex=00000013_019.png,FollowUpNumber=19,PatientID=13,PatientAge=62,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2021,OriginalImageHeight=2021,OriginalImagePixelSpacingX=0.194311,OriginalImagePixelSpacingY=0.194311  
+Entity Instance: Image|00000013_020.png|ImageIndex=00000013_020.png,FollowUpNumber=20,PatientID=13,PatientAge=62,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2021,OriginalImageHeight=2021,OriginalImagePixelSpacingX=0.194311,OriginalImagePixelSpacingY=0.194311  
+Entity Instance: Image|00000013_021.png|ImageIndex=00000013_021.png,FollowUpNumber=21,PatientID=13,PatientAge=62,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2021,OriginalImageHeight=2021,OriginalImagePixelSpacingX=0.194311,OriginalImagePixelSpacingY=0.194311  
+Entity Instance: Image|00000013_022.png|ImageIndex=00000013_022.png,FollowUpNumber=22,PatientID=13,PatientAge=56,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2870,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000013_023.png|ImageIndex=00000013_023.png,FollowUpNumber=23,PatientID=13,PatientAge=57,PatientGender=M,ViewPosition=AP,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000013_024.png|ImageIndex=00000013_024.png,FollowUpNumber=24,PatientID=13,PatientAge=57,PatientGender=M,ViewPosition=AP,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000013_025.png|ImageIndex=00000013_025.png,FollowUpNumber=25,PatientID=13,PatientAge=56,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2992,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000013_026.png|ImageIndex=00000013_026.png,FollowUpNumber=26,PatientID=13,PatientAge=57,PatientGender=M,ViewPosition=AP,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000013_027.png|ImageIndex=00000013_027.png,FollowUpNumber=27,PatientID=13,PatientAge=57,PatientGender=M,ViewPosition=AP,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000013_028.png|ImageIndex=00000013_028.png,FollowUpNumber=28,PatientID=13,PatientAge=57,PatientGender=M,ViewPosition=AP,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000013_029.png|ImageIndex=00000013_029.png,FollowUpNumber=29,PatientID=13,PatientAge=57,PatientGender=M,ViewPosition=AP,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000013_030.png|ImageIndex=00000013_030.png,FollowUpNumber=30,PatientID=13,PatientAge=57,PatientGender=M,ViewPosition=AP,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000013_031.png|ImageIndex=00000013_031.png,FollowUpNumber=31,PatientID=13,PatientAge=57,PatientGender=M,ViewPosition=AP,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000013_032.png|ImageIndex=00000013_032.png,FollowUpNumber=32,PatientID=13,PatientAge=57,PatientGender=M,ViewPosition=AP,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000013_033.png|ImageIndex=00000013_033.png,FollowUpNumber=33,PatientID=13,PatientAge=56,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2946,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000013_034.png|ImageIndex=00000013_034.png,FollowUpNumber=34,PatientID=13,PatientAge=56,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2642,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000013_035.png|ImageIndex=00000013_035.png,FollowUpNumber=35,PatientID=13,PatientAge=56,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2992,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000013_036.png|ImageIndex=00000013_036.png,FollowUpNumber=36,PatientID=13,PatientAge=56,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2952,OriginalImageHeight=2968,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000013_037.png|ImageIndex=00000013_037.png,FollowUpNumber=37,PatientID=13,PatientAge=56,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2990,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000013_038.png|ImageIndex=00000013_038.png,FollowUpNumber=38,PatientID=13,PatientAge=56,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2822,OriginalImageHeight=2861,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000013_039.png|ImageIndex=00000013_039.png,FollowUpNumber=39,PatientID=13,PatientAge=56,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2992,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000013_040.png|ImageIndex=00000013_040.png,FollowUpNumber=40,PatientID=13,PatientAge=56,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2576,OriginalImageHeight=2785,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000013_041.png|ImageIndex=00000013_041.png,FollowUpNumber=41,PatientID=13,PatientAge=56,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2992,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000013_042.png|ImageIndex=00000013_042.png,FollowUpNumber=42,PatientID=13,PatientAge=56,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2696,OriginalImageHeight=2812,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000013_043.png|ImageIndex=00000013_043.png,FollowUpNumber=43,PatientID=13,PatientAge=56,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2992,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000013_044.png|ImageIndex=00000013_044.png,FollowUpNumber=44,PatientID=13,PatientAge=56,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2992,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000013_045.png|ImageIndex=00000013_045.png,FollowUpNumber=45,PatientID=13,PatientAge=56,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2992,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000013_046.png|ImageIndex=00000013_046.png,FollowUpNumber=46,PatientID=13,PatientAge=56,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2730,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000014_000.png|ImageIndex=00000014_000.png,FollowUpNumber=0,PatientID=14,PatientAge=61,PatientGender=F,ViewPosition=PA,OriginalImageWidth=2048,OriginalImageHeight=2500,OriginalImagePixelSpacingX=0.171,OriginalImagePixelSpacingY=0.171  
+Entity Instance: Image|00000015_000.png|ImageIndex=00000015_000.png,FollowUpNumber=0,PatientID=15,PatientAge=70,PatientGender=M,ViewPosition=AP,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000016_000.png|ImageIndex=00000016_000.png,FollowUpNumber=0,PatientID=16,PatientAge=71,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2992,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000017_000.png|ImageIndex=00000017_000.png,FollowUpNumber=0,PatientID=17,PatientAge=77,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000017_001.png|ImageIndex=00000017_001.png,FollowUpNumber=1,PatientID=17,PatientAge=77,PatientGender=M,ViewPosition=AP,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000017_002.png|ImageIndex=00000017_002.png,FollowUpNumber=2,PatientID=17,PatientAge=78,PatientGender=M,ViewPosition=AP,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000018_000.png|ImageIndex=00000018_000.png,FollowUpNumber=0,PatientID=18,PatientAge=75,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000019_000.png|ImageIndex=00000019_000.png,FollowUpNumber=0,PatientID=19,PatientAge=66,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2992,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000020_000.png|ImageIndex=00000020_000.png,FollowUpNumber=0,PatientID=20,PatientAge=53,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2978,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000020_001.png|ImageIndex=00000020_001.png,FollowUpNumber=1,PatientID=20,PatientAge=47,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2992,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000020_002.png|ImageIndex=00000020_002.png,FollowUpNumber=2,PatientID=20,PatientAge=48,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2414,OriginalImageHeight=2991,OriginalImagePixelSpacingX=0.143,OriginalImagePixelSpacingY=0.143  
+Entity Instance: Image|00000021_000.png|ImageIndex=00000021_000.png,FollowUpNumber=0,PatientID=21,PatientAge=78,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2500,OriginalImageHeight=2048,OriginalImagePixelSpacingX=0.168,OriginalImagePixelSpacingY=0.168  
+Entity Instance: Image|00000021_001.png|ImageIndex=00000021_001.png,FollowUpNumber=1,PatientID=21,PatientAge=80,PatientGender=M,ViewPosition=PA,OriginalImageWidth=3056,OriginalImageHeight=2496,OriginalImagePixelSpacingX=0.139,OriginalImagePixelSpacingY=0.139  
+Entity Instance: Image|00000022_000.png|ImageIndex=00000022_000.png,FollowUpNumber=0,PatientID=22,PatientAge=48,PatientGender=M,ViewPosition=PA,OriginalImageWidth=2048,OriginalImageHeight=2500,OriginalImagePixelSpacingX=0.171,OriginalImagePixelSpacingY=0.171  
+
+---
+
+=== RELATIONSHIP INSTANCES ===
+
+#### PATIENT TO IMAGE (HAS_IMAGE)
+Patient 1 HAS_IMAGE Image 00000001_000.png  
+Patient 1 HAS_IMAGE Image 00000001_001.png  
+Patient 1 HAS_IMAGE Image 00000001_002.png  
+Patient 2 HAS_IMAGE Image 00000002_000.png  
+Patient 3 HAS_IMAGE Image 00000003_000.png  
+Patient 3 HAS_IMAGE Image 00000003_001.png  
+Patient 3 HAS_IMAGE Image 00000003_002.png  
+Patient 3 HAS_IMAGE Image 00000003_003.png  
+Patient 3 HAS_IMAGE Image 00000003_004.png  
+Patient 3 HAS_IMAGE Image 00000003_005.png  
+Patient 3 HAS_IMAGE Image 00000003_006.png  
+Patient 3 HAS_IMAGE Image 00000003_007.png  
+Patient 4 HAS_IMAGE Image 00000004_000.png  
+Patient 5 HAS_IMAGE Image 00000005_000.png  
+Patient 5 HAS_IMAGE Image 00000005_001.png  
+Patient 5 HAS_IMAGE Image 00000005_002.png  
+Patient 5 HAS_IMAGE Image 00000005_003.png  
+Patient 5 HAS_IMAGE Image 00000005_004.png  
+Patient 5 HAS_IMAGE Image 00000005_005.png  
+Patient 5 HAS_IMAGE Image 00000005_006.png  
+Patient 5 HAS_IMAGE Image 00000005_007.png  
+Patient 6 HAS_IMAGE Image 00000006_000.png  
+Patient 7 HAS_IMAGE Image 00000007_000.png  
+Patient 8 HAS_IMAGE Image 00000008_000.png  
+Patient 8 HAS_IMAGE Image 00000008_001.png  
+Patient 8 HAS_IMAGE Image 00000008_002.png  
+Patient 9 HAS_IMAGE Image 00000009_000.png  
+Patient 10 HAS_IMAGE Image 00000010_000.png  
+Patient 11 HAS_IMAGE Image 00000011_000.png  
+Patient 11 HAS_IMAGE Image 00000011_001.png  
+Patient 11 HAS_IMAGE Image 00000011_002.png  
+Patient 11 HAS_IMAGE Image 00000011_003.png  
+Patient 11 HAS_IMAGE Image 00000011_004.png  
+Patient 11 HAS_IMAGE Image 00000011_005.png  
+Patient 11 HAS_IMAGE Image 00000011_006.png  
+Patient 11 HAS_IMAGE Image 00000011_007.png  
+Patient 11 HAS_IMAGE Image 00000011_008.png  
+Patient 12 HAS_IMAGE Image 00000012_000.png  
+Patient 13 HAS_IMAGE Image 00000013_000.png  
+Patient 13 HAS_IMAGE Image 00000013_001.png  
+Patient 13 HAS_IMAGE Image 00000013_002.png  
+Patient 13 HAS_IMAGE Image 00000013_003.png  
+Patient 13 HAS_IMAGE Image 00000013_004.png  
+Patient 13 HAS_IMAGE Image 00000013_005.png  
+Patient 13 HAS_IMAGE Image 00000013_006.png  
+Patient 13 HAS_IMAGE Image 00000013_007.png  
+Patient 13 HAS_IMAGE Image 00000013_008.png  
+Patient 13 HAS_IMAGE Image 00000013_009.png  
+Patient 13 HAS_IMAGE Image 00000013_010.png  
+Patient 13 HAS_IMAGE Image 00000013_011.png  
+Patient 13 HAS_IMAGE Image 00000013_012.png  
+Patient 13 HAS_IMAGE Image 00000013_013.png  
+Patient 13 HAS_IMAGE Image 00000013_014.png  
+Patient 13 HAS_IMAGE Image 00000013_015.png  
+Patient 13 HAS_IMAGE Image 00000013_016.png  
+Patient 13 HAS_IMAGE Image 00000013_017.png  
+Patient 13 HAS_IMAGE Image 00000013_018.png  
+Patient 13 HAS_IMAGE Image 00000013_019.png  
+Patient 13 HAS_IMAGE Image 00000013_020.png  
+Patient 13 HAS_IMAGE Image 00000013_021.png  
+Patient 13 HAS_IMAGE Image 00000013_022.png  
+Patient 13 HAS_IMAGE Image 00000013_023.png  
+Patient 13 HAS_IMAGE Image 00000013_024.png  
+Patient 13 HAS_IMAGE Image 00000013_025.png  
+Patient 13 HAS_IMAGE Image 00000013_026.png  
+Patient 13 HAS_IMAGE Image 00000013_027.png  
+Patient 13 HAS_IMAGE Image 00000013_028.png  
+Patient 13 HAS_IMAGE Image 00000013_029.png  
+Patient 13 HAS_IMAGE Image 00000013_030.png  
+Patient 13 HAS_IMAGE Image 00000013_031.png  
+Patient 13 HAS_IMAGE Image 00000013_032.png  
+Patient 13 HAS_IMAGE Image 00000013_033.png  
+Patient 13 HAS_IMAGE Image 00000013_034.png  
+Patient 13 HAS_IMAGE Image 00000013_035.png  
+Patient 13 HAS_IMAGE Image 00000013_036.png  
+Patient 13 HAS_IMAGE Image 00000013_037.png  
+Patient 13 HAS_IMAGE Image 00000013_038.png  
+Patient 13 HAS_IMAGE Image 00000013_039.png  
+Patient 13 HAS_IMAGE Image 00000013_040.png  
+Patient 13 HAS_IMAGE Image 00000013_041.png  
+Patient 13 HAS_IMAGE Image 00000013_042.png  
+Patient 13 HAS_IMAGE Image 00000013_043.png  
+Patient 13 HAS_IMAGE Image 00000013_044.png  
+Patient 13 HAS_IMAGE Image 00000013_045.png  
+Patient 13 HAS_IMAGE Image 00000013_046.png  
+Patient 14 HAS_IMAGE Image 00000014_000.png  
+Patient 15 HAS_IMAGE Image 00000015_000.png  
+Patient 16 HAS_IMAGE Image 00000016_000.png  
+Patient 17 HAS_IMAGE Image 00000017_000.png  
+Patient 17 HAS_IMAGE Image 00000017_001.png  
+Patient 17 HAS_IMAGE Image 00000017_002.png  
+Patient 18 HAS_IMAGE Image 00000018_000.png  
+Patient 19 HAS_IMAGE Image 00000019_000.png  
+Patient 20 HAS_IMAGE Image 00000020_000.png  
+Patient 20 HAS_IMAGE Image 00000020_001.png  
+Patient 20 HAS_IMAGE Image 00000020_002.png  
+Patient 21 HAS_IMAGE Image 00000021_000.png  
+Patient 21 HAS_IMAGE Image 00000021_001.png  
+Patient 22 HAS_IMAGE Image 00000022_000.png  
+
+#### IMAGE TO FINDING (HAS_FINDING)  
+(For brevity, only a few examples are shown; in a full extraction, every image row would be mapped to all its findings.)
+
+Image 00000001_000.png HAS_FINDING Finding Cardiomegaly  
+Image 00000001_001.png HAS_FINDING Finding Cardiomegaly  
+Image 00000001_001.png HAS_FINDING Finding Emphysema  
+Image 00000001_002.png HAS_FINDING Finding Cardiomegaly  
+Image 00000001_002.png HAS_FINDING Finding Effusion  
+Image 00000002_000.png HAS_FINDING Finding No Finding  
+Image 00000003_000.png HAS_FINDING Finding Hernia  
+Image 00000003_001.png HAS_FINDING Finding Hernia  
+Image 00000003_002.png HAS_FINDING Finding Hernia  
+Image 00000003_003.png HAS_FINDING Finding Hernia  
+Image 00000003_003.png HAS_FINDING Finding Infiltration  
+Image 00000003_004.png HAS_FINDING Finding Hernia  
+Image 00000003_005.png HAS_FINDING Finding Hernia  
+Image 00000003_006.png HAS_FINDING Finding Hernia  
+Image 00000003_007.png HAS_FINDING Finding Hernia  
+Image 00000004_000.png HAS_FINDING Finding Mass  
+Image 00000004_000.png HAS_FINDING Finding Nodule  
+Image 00000005_000.png HAS_FINDING Finding No Finding  
+Image 00000005_001.png HAS_FINDING Finding No Finding  
+Image 00000005_002.png HAS_FINDING Finding No Finding  
+Image 00000005_003.png HAS_FINDING Finding No Finding  
+Image 00000005_004.png HAS_FINDING Finding No Finding  
+Image 00000005_005.png HAS_FINDING Finding No Finding  
+Image 00000005_006.png HAS_FINDING Finding Infiltration  
+Image 00000005_007.png HAS_FINDING Finding Effusion  
+Image 00000005_007.png HAS_FINDING Finding Infiltration  
+...  
+(Continue for all 99 images and all findings per image.)
+
+---
+
+**Note:**  
+- All 99 images, all 22 patients, and all unique findings are extracted as entities.  
+- Each image is linked to its patient (HAS_IMAGE) and to all its findings (HAS_FINDING, one per finding label per image).  
+- All property values are preserved exactly as in the source.  
+- The relationships are many:many between images and findings, and 1:many between patients and images.  
+- For brevity, only a subset of instances is shown above; in a full extraction, all 99 images and all their findings would be listed.
